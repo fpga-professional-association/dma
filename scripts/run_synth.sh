@@ -58,6 +58,7 @@ synth_one() {
 echo "=== yosys generic synthesis (leaf protocol + util blocks) ==="
 synth_one dma_fifo       rtl/core/dma_fifo.sv
 synth_one dma_arbiter    rtl/core/dma_arbiter.sv
+synth_one reset_sync     rtl/core/reset_sync.sv
 synth_one gmm_to_avalon  rtl/adapters/gmm_to_avalon.sv
 synth_one gmm_to_axi4    rtl/adapters/gmm_to_axi4.sv
 synth_one gmm_to_ahb     rtl/adapters/gmm_to_ahb.sv

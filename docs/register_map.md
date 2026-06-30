@@ -24,7 +24,8 @@ Byte offset = word offset × 4.
 | 0   | GO     | RW     | Write 1 to start processing the ring (auto-clears on accept). |
 | 1   | ABORT  | RW     | Write 1 to abort/clear the engine (self-clearing).     |
 | 2   | IRQ_EN | RW     | Global interrupt enable.                               |
-| 31:3| —      | RO     | Reserved (0).                                          |
+| 3   | STOP   | RW     | Write 1 to request a **graceful stop** (self-clearing). See below. |
+| 31:4| —      | RO     | Reserved (0).                                          |
 
 ## STATUS (0x01)
 
@@ -77,14 +78,32 @@ issue `CTRL.ABORT` to clear it before restarting. (HOST *write* completion error
 on C2H are out of scope; the simple Avalon-MM HOST profile carries no write
 response. A completion-timeout watchdog is likewise a documented follow-up.)
 
-## CTRL.ABORT semantics
+## CTRL.ABORT vs CTRL.STOP (hard reset vs graceful stop)
 
 `CTRL.ABORT` is a **hard datapath reset** for error recovery: it flushes the
 data FIFO, drops any in-flight HOST/SYS bus burst, clears the engine FSM and the
 sticky SYS *and* HOST bus errors (clearing both `sys_bus_error` and
 `host_bus_error`), and returns the engine to IDLE. A burst that was already
-in flight on the bus is abandoned (truncated) — ABORT is not a graceful drain.
-For an orderly stop, let the descriptor ring complete instead.
+in flight on the bus is abandoned (truncated) — ABORT is **not** a graceful drain.
+
+`CTRL.STOP` is the **graceful** counterpart (productized for issue #14). When the
+engine is BUSY, writing `STOP=1` lets the descriptor *currently in flight* finish
+cleanly — its in-flight bus burst is **not** truncated and its data integrity is
+preserved — and then halts the ring **before** fetching the next descriptor,
+leaving the FSM/FIFO coherent and the engine immediately restartable with `GO`.
+
+* `STOP` is self-clearing and is only meaningful while BUSY; it is ignored if the
+  engine is idle, and a fresh `GO` clears any stale request.
+* A graceful stop terminates via the normal completion path: `STATUS.DONE` (and
+  the DONE interrupt, if enabled) assert, with **`DESC_INDEX < DESC_COUNT`**. That
+  inequality is how software distinguishes an early graceful stop from a full ring
+  completion (where `DESC_INDEX == DESC_COUNT`).
+* `ABORT` supersedes a pending `STOP`. If a SYS bus error occurs first, the
+  descriptor reports `STATUS.ERROR` as usual and the pending stop is dropped.
+
+Use `STOP` for an orderly quiesce (e.g. before reconfiguration); use `ABORT` only
+for error recovery / forced teardown. Letting the ring run to completion remains
+the simplest orderly stop when no early halt is required.
 
 ## Programming sequence
 

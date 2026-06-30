@@ -28,6 +28,7 @@ module dma_csr
   // -------- control out (to engine) --------
   output logic                  go,            // 1-cycle pulse
   output logic                  abort,         // 1-cycle pulse
+  output logic                  stop,          // 1-cycle pulse (issue #14: graceful stop)
   output logic [HADDR_W-1:0]    desc_base,
   output logic [LEN_W-1:0]      desc_count,
 
@@ -87,6 +88,7 @@ module dma_csr
     if (!rst_n) begin
       go             <= 1'b0;
       abort          <= 1'b0;
+      stop           <= 1'b0;
       irq_en_q       <= 1'b0;
       desc_base_lo_q <= '0;
       desc_base_hi_q <= '0;
@@ -98,6 +100,7 @@ module dma_csr
       // self-clearing control pulses
       go    <= is_ctrl && csr_writedata[CTRL_GO];
       abort <= is_ctrl && csr_writedata[CTRL_ABORT];
+      stop  <= is_ctrl && csr_writedata[CTRL_STOP];   // issue #14: graceful stop
 
       if (is_ctrl)                                irq_en_q       <= csr_writedata[CTRL_IRQ_EN];
       if (wr && (csr_address == A_BASE_LO))       desc_base_lo_q <= csr_writedata;

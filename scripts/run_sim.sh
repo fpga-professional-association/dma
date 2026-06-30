@@ -14,6 +14,7 @@ mkdir -p sim/build
 RTL="rtl/pkg/dma_pkg.sv \
      rtl/core/dma_fifo.sv rtl/core/dma_arbiter.sv rtl/core/dma_csr.sv \
      rtl/core/dma_descriptor_fetch.sv rtl/core/dma_data_mover.sv rtl/core/dma_engine_core.sv \
+     rtl/core/reset_sync.sv \
      rtl/adapters/gmm_to_avalon.sv rtl/adapters/gmm_to_axi4.sv rtl/adapters/gmm_to_ahb.sv \
      rtl/top/pcie_dma_top.sv \
      sim/models/avalon_mem_model.sv sim/models/axi_mem_model.sv sim/models/ahb_mem_model.sv \
@@ -43,4 +44,6 @@ else
   run "AXI4   +stalls" USE_AXI STALLS
   run "AHB           " USE_AHB
   run "AHB    +stalls" USE_AHB STALLS
+  # issue #14: exercise the optional 2-FF reset synchronizer (RESET_SYNC=1)
+  run "AVALON +rstsyn" RESET_SYNC_EN
 fi

@@ -85,14 +85,19 @@ pcie_dma_top #(.SYS_IF("AXI4")) u_dma ( ... );   // or "AVALON" / "AHB"
 ```
 
 Key parameters live in `rtl/pkg/dma_pkg.sv` (`DATA_W`, `HADDR_W`, `SADDR_W`,
-`MAX_BURST_BEATS`, `FIFO_DEPTH`, …).
+`MAX_BURST_BEATS`, `FIFO_DEPTH`, …). `pcie_dma_top` also exposes an optional
+`RESET_SYNC` (default 0): set it to 1 to route the core/adapter through the 2-FF
+`reset_sync` so reset deassertion is synchronized to `clk`. The default keeps the
+historical direct-`rst_n` datapath unchanged. Integration behaviours (reset sync,
+dual-clock CDC bridge, posted-write fence, graceful stop) are tracked in
+`docs/architecture.md` ("Integrator responsibilities").
 
 ## Build & verify (open-source tooling)
 
 | Task                     | Command                              | Tool        |
 |--------------------------|--------------------------------------|-------------|
 | Lint / elaborate (×3 IF) | `./scripts/lint.sh`                  | Verilator   |
-| Simulate (6 configs)     | `./scripts/run_sim.sh`               | Icarus      |
+| Simulate (7 configs)     | `./scripts/run_sim.sh`               | Icarus      |
 | Formal proofs            | `./scripts/run_formal.sh`            | yosys (SAT) |
 | Generic gate mapping     | `./scripts/run_synth.sh`             | yosys       |
 
@@ -104,6 +109,7 @@ AXI4          : PASS
 AXI4   +stalls: PASS
 AHB           : PASS
 AHB    +stalls: PASS
+AVALON +rstsyn: PASS
 
 $ ./scripts/run_formal.sh
 fv_fifo      : PASS  (bmc depth 22)
@@ -175,8 +181,10 @@ See `docs/register_map.md` and `docs/descriptor_format.md`. In short:
   C2H, multi-burst transfers, a 1 KiB-boundary-crossing burst, and the
   completion interrupt; self-checks both destinations. Also covers the error
   paths (invalid descriptor, bad length/alignment), `count==0`, **abort
-  mid-transfer** (regression for FIFO-flush / arbiter-deadlock), and (AHB)
-  **SYS bus-error reporting**. With AXI back-pressure the slave model gates
+  mid-transfer** (regression for FIFO-flush / arbiter-deadlock), **graceful stop**
+  (`CTRL.STOP`: completes the in-flight descriptor, halts before the next,
+  `DESC_INDEX < DESC_COUNT`), the optional **reset synchronizer** (`RESET_SYNC=1`),
+  and (AHB) **SYS bus-error reporting**. With AXI back-pressure the slave model gates
   `AWREADY` on `WVALID`, exercising the adapter's concurrent AW/W presentation.
   Passes for Avalon/AXI4/AHB with and without pseudo-random slave back-pressure.
 * **Formal** — bounded proofs (BMC depth 22, yosys SAT) of FIFO ordering/data
