@@ -56,6 +56,17 @@ beats are accepted (each when `!waitrequest`); the burst ends after the Nth.
 that the burst never crosses a 4 KiB boundary. Therefore adapters never need to
 split a burst for AXI 4 KiB or AHB 1 KiB rules.
 
+> **Byte-enable usage — whole-word only.** Although `byteenable` is defined above
+> as a full `DATA_W/8`-bit per-beat lane mask, the data mover always drives it to
+> all-ones and only issues whole-bus-word, `DATA_W/8`-aligned transfers;
+> descriptors that would need a sub-word or unaligned access are rejected upstream
+> with `BAD_LEN` / `BAD_ALIGN` (see the **Limitations** section of the top-level
+> `README.md`). Consequently the AXI4 and Avalon adapters forward
+> `byteenable`/`wstrb` but never see a partial strobe, and the AHB adapter fixes
+> `HSIZE` to the bus width and ignores `byteenable`. Adding partial-strobe support
+> is primarily a data-mover change plus an AHB head/tail strategy (narrowed
+> `HSIZE` or read-modify-write).
+
 ---
 
 ## 2. CSR slave interface (host BAR access)
