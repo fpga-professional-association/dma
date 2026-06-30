@@ -1,0 +1,16 @@
+[options]
+mode bmc
+depth 30
+
+[engines]
+smtbmc z3
+# alternatives: smtbmc boolector | smtbmc yices | aiger suprove
+
+[script]
+read_verilog -sv -formal -I. dma_pkg.sv dma_fifo.sv fv_fifo.sv
+prep -top fv_fifo
+
+[files]
+../rtl/pkg/dma_pkg.sv
+../rtl/core/dma_fifo.sv
+fv_fifo.sv

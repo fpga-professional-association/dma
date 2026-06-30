@@ -1,0 +1,51 @@
+#============================================================================
+# pcie_dma.qsf -- Quartus settings for the PCIe DMA engine
+#
+# Synthesizes pcie_dma_top as a standalone IP core. The system-bus flavour is
+# chosen with the SYS_IF parameter (AVALON | AXI4 | AHB).
+#
+# This is an IP core meant to be integrated (e.g. as a Platform Designer / Qsys
+# component behind the PCIe Hard IP). For a standalone fitter run, the top-level
+# bus ports are turned into VIRTUAL_PINs (see virtual_pins.tcl) so the design
+# is not constrained by physical pin count.
+#
+#   quartus_sh --flow compile pcie_dma
+#============================================================================
+
+set_global_assignment -name FAMILY "Cyclone V"
+set_global_assignment -name DEVICE 5CGXFC9D6F27C7
+set_global_assignment -name TOP_LEVEL_ENTITY pcie_dma_top
+set_global_assignment -name ORIGINAL_QUARTUS_VERSION 23.1
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+
+# language / search
+set_global_assignment -name VERILOG_INPUT_VERSION SYSTEMVERILOG_2012
+set_global_assignment -name SEARCH_PATH ../rtl/pkg
+
+# package (must be read first)
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/pkg/dma_pkg.sv
+
+# core
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/dma_fifo.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/dma_arbiter.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/dma_csr.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/dma_descriptor_fetch.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/dma_data_mover.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/dma_engine_core.sv
+
+# adapters
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/adapters/gmm_to_avalon.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/adapters/gmm_to_axi4.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/adapters/gmm_to_ahb.sv
+
+# top
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/top/pcie_dma_top.sv
+
+# constraints
+set_global_assignment -name SDC_FILE pcie_dma.sdc
+
+# system-bus selection: AVALON | AXI4 | AHB
+set_parameter -name SYS_IF "AVALON"
+
+# turn the bus ports into virtual pins for standalone synthesis
+set_global_assignment -name TCL_SCRIPT_FILE virtual_pins.tcl

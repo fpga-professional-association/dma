@@ -1,0 +1,50 @@
+# Descriptor Format
+
+Descriptors live in **host memory** as a contiguous ring of 32-byte entries
+starting at `{DESC_BASE_HI, DESC_BASE_LO}`. The engine processes `DESC_COUNT`
+entries in order. All multi-byte fields are **little-endian**.
+
+```
+ byte offset
+ 0x00  ┌───────────────────────────────────────────────┐
+       │ host_addr [63:0]   (PCIe-side byte address)    │
+ 0x08  ├───────────────────────────────────────────────┤
+       │ sys_addr  [63:0]   (system-side byte address)  │   only SADDR_W bits used
+ 0x10  ├───────────────────────┬───────────────────────┤
+       │ length [31:0] (bytes) │ control [31:0]         │
+ 0x18  ├───────────────────────┴───────────────────────┤
+       │ reserved / status writeback [63:0]             │
+ 0x20  └───────────────────────────────────────────────┘
+```
+
+## control field
+
+| Bit | Name    | Description                                          |
+|-----|---------|------------------------------------------------------|
+| 0   | C_VALID | 1 = descriptor is owned by the engine and valid.     |
+| 1   | C_DIR   | 0 = H2C (host→system), 1 = C2H (system→host).         |
+| 2   | C_IRQ   | 1 = raise the completion IRQ after this descriptor.   |
+| 3   | C_LAST  | 1 = last descriptor (engine may stop early).          |
+| 31:4| —       | Reserved (0).                                        |
+
+## Constraints
+
+* The ring base `{DESC_BASE_HI, DESC_BASE_LO}` must be **32-byte aligned**
+  (BAD_BASE otherwise, checked at GO).
+* `length` must be non-zero and a multiple of `DATA_W/8` bytes
+  (BAD_LEN otherwise).
+* `host_addr` and `sys_addr` must be `DATA_W/8`-aligned (BAD_ALIGN otherwise).
+* The engine processes descriptors `[0 .. DESC_COUNT-1]`. `C_LAST` lets a ring be
+  terminated before `DESC_COUNT` is reached.
+
+## Assembly into `desc_t`
+
+The fetch unit reads `DESC_BEATS = ceil(256 / DATA_W)` beats from host memory,
+concatenates them little-endian into a 256-bit word `d`, then slices:
+
+```
+host_addr = d[ 63:  0]
+sys_addr  = d[127: 64]   // low SADDR_W bits used
+length    = d[159:128]
+control   = d[191:160]
+```

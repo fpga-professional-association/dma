@@ -1,0 +1,15 @@
+[options]
+mode bmc
+depth 24
+
+[engines]
+smtbmc z3
+
+[script]
+read_verilog -sv -formal -I. dma_pkg.sv gmm_to_ahb.sv fv_ahb.sv
+prep -top fv_ahb
+
+[files]
+../rtl/pkg/dma_pkg.sv
+../rtl/adapters/gmm_to_ahb.sv
+fv_ahb.sv
