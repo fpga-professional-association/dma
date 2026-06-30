@@ -106,7 +106,19 @@ AHB-Lite master. The adapter:
   `HTRANS = NONSEQ` for the first beat then `SEQ` for the rest; `IDLE` otherwise.
 * `HSIZE = log2(DATA_W/8)`, `HADDR` increments by `DATA_W/8` each beat.
 * Honors `HREADY` (address/data phase pipeline): advances only when `HREADY==1`.
-* Checks `HRESP`; a non-OKAY response raises the engine error flag.
+* Handles the AHB-Lite two-cycle `HRESP=ERROR` response (first cycle
+  `HRESP=ERROR`/`HREADY=0`, second cycle `HRESP=ERROR`/`HREADY=1`); the sticky
+  engine error flag is raised on the completing (`HREADY`-high) cycle. Whether
+  the remainder of the bounded burst is cancelled is controlled by the
+  `EARLY_ABORT` parameter of `gmm_to_ahb`:
+  * `EARLY_ABORT=0` (default): the burst is allowed to **drain** (the bounded
+    burst completes normally); the error is reported via the sticky flag.
+    Cancelling is optional in AHB-Lite, so this is fully protocol-compliant.
+  * `EARLY_ABORT=1` (opt-in): the adapter **cancels** the burst -- it drives
+    `HTRANS=IDLE` for the pending transfer on the completing error cycle, stops
+    issuing further address phases and returns to idle, keeping the error
+    sticky. (Verified at the adapter boundary by `formal/fv_ahb_abort.sv`.)
+  Recovery in both cases is the engine's `CTRL.ABORT` datapath reset.
 
 ## 5. Avalon-MM master (system-port option `SYS_IF="AVALON"`)
 

@@ -1,23 +1,22 @@
-// SPDX-License-Identifier: Apache-2.0
 //============================================================================
-// fv_ahb.sv -- Formal AHB-Lite-compliance properties for gmm_to_ahb
+// fv_ahb_abort.sv -- Formal proof of the opt-in AHB-Lite ERROR burst-cancel
 //
-// Portable yosys-formal immediate-assertion style. Environment: a well-behaved
-// GMM master. The adapter's AHB-Lite outputs are proven compliant: legal HTRANS
-// sequencing, INCR bursts, control held stable across wait states, address
-// incrementing by the bus width.
+// Same portable yosys-formal style and well-behaved-GMM environment as
+// fv_ahb.sv, but the DUT is instantiated with EARLY_ABORT=1. A spec-legal
+// two-cycle AHB-Lite ERROR response is MODELLED as assumed slave behaviour
+// (first cycle HRESP=ERROR/HREADY=0, second cycle HRESP=ERROR/HREADY=1) and the
+// adapter's *cancellation* is proven:
+//   * the address phase pending across the ERROR is dropped to HTRANS=IDLE on
+//     the completing (HREADY-high) error cycle  (the following transfer is
+//     cancelled rather than continued),
+//   * control is held stable across an ordinary wait state and is only allowed
+//     to change to IDLE the cycle after the ERROR (legal HTRANS sequencing),
+//   * the sticky `err` flag is still raised.
 //
-// This harness drives the DUT in its default (drain) mode (EARLY_ABORT=0) and
-// additionally MODELS a spec-legal two-cycle AHB-Lite ERROR response from the
-// slave (first cycle HRESP=ERROR/HREADY=0, second cycle HRESP=ERROR/HREADY=1)
-// and proves the adapter reacts legally: control is held stable across the
-// HREADY-low error cycle and the sticky `err` flag is raised. The opt-in
-// burst-cancel (EARLY_ABORT=1) is proven separately in formal/fv_ahb_abort.sv.
-//
-// Run:  ../scripts/run_formal.sh   (or sby -f formal/ahb.sby)
+// Run:  ../scripts/run_formal.sh   (or sby -f formal/ahb_abort.sby)
 //============================================================================
 
-module fv_ahb #(
+module fv_ahb_abort #(
   parameter int unsigned AW = 8,
   parameter int unsigned DW = 16
 ) (
@@ -50,18 +49,18 @@ module fv_ahb #(
   logic [DW-1:0]   hwdata;
   wire clr = 1'b0;   // abort exercised by simulation, not this proof
 
-  gmm_to_ahb #(.AW(AW), .DW(DW), .BCW(BCW)) dut (.*);
+  gmm_to_ahb #(.AW(AW), .DW(DW), .BCW(BCW), .EARLY_ABORT(1'b1)) dut (.*);
 
   wire active = (htrans == HT_NONSEQ) || (htrans == HT_SEQ);
 
   // Port-only mirror of the adapter's single AHB-Lite data phase (a hierarchical
   // ref to DUT internals does not resolve in this yosys flow). A data phase is in
-  // flight the cycle after an accepted active address phase, and is extended while
+  // flight the cycle after an accepted active address phase, extended while
   // HREADY is low -- exactly the AHB address/data pipeline the adapter implements.
-  logic dp;   // a data phase is in flight this cycle
+  logic dp;
   always @(posedge clk) begin
     if (!rst_n)      dp <= 1'b0;
-    else if (hready) dp <= active;   // accepted addr phase -> next-cycle data phase
+    else if (hready) dp <= active;
   end
   // completing (HREADY-high) cycle of a two-cycle ERROR response
   wire dp_err_complete = dp && hready && hresp;
@@ -77,7 +76,6 @@ module fv_ahb #(
     // ---------- environment: well-behaved GMM master ----------
     assume (!(gmm_read && gmm_write));
     assume (gmm_burstcount >= 1 && gmm_burstcount <= MAXB);
-    if (dut.st == 2'd2 /*H_WRITE*/) assume (gmm_write);   // master holds write across the burst
     if (past_ok && $past((gmm_read||gmm_write) && gmm_waitrequest)) begin
       assume (gmm_address    == $past(gmm_address));
       assume (gmm_burstcount == $past(gmm_burstcount));
@@ -87,51 +85,52 @@ module fv_ahb #(
     end
 
     // ---------- environment: spec-legal two-cycle ERROR response -------------
-    // ERROR is only signalled while a data phase is in flight.
-    if (hresp) assume (dp);
+    if (hresp) assume (dp);                                    // only during a data phase
     if (past_ok) begin
-      // first ERROR cycle (HRESP rises) extends the data phase: HREADY=0
-      if (hresp && !$past(hresp))               assume (!hready);
-      // the response completes the next cycle: HRESP held, HREADY=1
-      if ($past(hresp) && !$past(hready)) begin assume (hresp); assume (hready); end
-      // ERROR lasts exactly two cycles: drop HRESP after the completing cycle
-      if ($past(hresp) && $past(hready))        assume (!hresp);
+      if (hresp && !$past(hresp))               assume (!hready);          // first cycle
+      if ($past(hresp) && !$past(hready)) begin assume (hresp); assume (hready); end // 2nd
+      if ($past(hresp) && $past(hready))        assume (!hresp);           // exactly two
     end
 
     // ---------- AHB-Lite compliance ----------
-    assert (htrans != HT_BUSY);                              // adapter never issues BUSY
+    assert (htrans != HT_BUSY);
     if (active) begin
-      assert (hburst == 3'b001);                             // INCR
+      assert (hburst == 3'b001);
       assert (hsize  == HSZ);
     end
 
-    // control held stable while the slave is not ready (AHB requirement)
+    // control held stable while waited -- EXCEPT the master may cancel the
+    // pending transfer to IDLE the cycle after an ERROR (legal AHB behaviour)
     if (past_ok && $past(active && !hready)) begin
-      assert (htrans == $past(htrans));
-      assert (haddr  == $past(haddr));
-      assert (hwrite == $past(hwrite));
-      assert (hsize  == $past(hsize));
-      assert (hburst == $past(hburst));
+      if ($past(hresp)) begin
+        assert (htrans == HT_IDLE);                            // ERROR -> cancel
+      end else begin
+        assert (htrans == $past(htrans));                     // ordinary wait -> hold
+        assert (haddr  == $past(haddr));
+        assert (hwrite == $past(hwrite));
+        assert (hsize  == $past(hsize));
+        assert (hburst == $past(hburst));
+      end
     end
 
-    // a SEQ beat must follow an active address phase (held across wait states)
+    // a SEQ beat must follow an active address phase
     if (past_ok && (htrans == HT_SEQ))
       assert ($past(active));
 
     // address increments by the bus width on each accepted active beat
-    // (AW-width arithmetic so it wraps the same way as the DUT)
     if (past_ok && (htrans == HT_SEQ) && $past(active && hready))
       assert (haddr == AW'($past(haddr) + STRIDE));
 
     // a read-data beat only when a data phase completes
     if (gmm_readdatavalid) assert (hready);
 
-    // ---------- reaction to the ERROR response ----------
-    // (control held stable across the HREADY-low error cycle is covered by the
-    //  "control held stable while the slave is not ready" assertion above.)
-    // the sticky engine error is raised the cycle after a completed ERROR phase
+    // ---------- burst-cancel on ERROR ----------
+    // the address phase pending across the ERROR is dropped: on the completing
+    // (HREADY-high) error cycle the adapter presents HTRANS=IDLE, cancelling the
+    // following transfer instead of continuing the burst with SEQ.
+    if (dp_err_complete) assert (htrans == HT_IDLE);
+    // the sticky engine error is still raised after the ERROR response
     if (past_ok && $past(dp_err_complete)) assert (err);
-    // ... and stays set (no clr exercised in this proof)
-    if (past_ok && $past(err))            assert (err);
+    if (past_ok && $past(err))             assert (err);
   end
 endmodule

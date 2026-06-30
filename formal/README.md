@@ -10,7 +10,8 @@ SMT solver**, and also work under SymbiYosys with a solver for unbounded proofs.
 | `fv_fifo.sv`     | `dma_fifo`         | occupancy math, no overflow/underflow, flag consistency, **FIFO ordering + data integrity** (symbolic tracked element) |
 | `fv_arbiter.sv`  | `dma_arbiter`      | single downstream command, **grant mutual exclusion**, response mutual exclusion, forwarded payload provenance |
 | `fv_axi4.sv`     | `gmm_to_axi4`      | **AXI4 handshake stability** (VALID held with stable payload until READY), INCR/ARSIZE/AWSIZE, AWLEN/ARLEN, WLAST placement, AW/AR exclusivity |
-| `fv_ahb.sv`      | `gmm_to_ahb`       | **AHB-Lite legality**: no BUSY, INCR, control held across wait states, NONSEQ→SEQ sequencing, address increment |
+| `fv_ahb.sv`      | `gmm_to_ahb`       | **AHB-Lite legality**: no BUSY, INCR, control held across wait states, NONSEQ→SEQ sequencing, address increment; models a spec-legal **two-cycle `HRESP=ERROR`** response and proves the sticky `err` flag is raised (drain mode, `EARLY_ABORT=0`) |
+| `fv_ahb_abort.sv`| `gmm_to_ahb` (`EARLY_ABORT=1`) | **AHB-Lite ERROR burst-cancel**: across the modelled two-cycle ERROR the pending transfer is dropped to `HTRANS=IDLE`, control only changes to IDLE on the ERROR (else held), and the sticky `err` flag is still raised |
 
 Each harness instantiates the DUT with **free** stimulus, constrains the
 environment with `assume` (a well-behaved GMM master: read/write exclusive,
@@ -21,7 +22,7 @@ environment with `assume` (a well-behaved GMM master: read/write exclusive,
 ## Run locally (no solver needed)
 
 ```
-./scripts/run_formal.sh            # bmc depth 22 on all four targets
+./scripts/run_formal.sh            # bmc depth 22 on all five targets
 ./scripts/run_formal.sh 40         # deeper bound
 ```
 
@@ -46,6 +47,7 @@ With a solver installed (z3, boolector, yices, …):
 sby -f formal/fifo.sby
 sby -f formal/axi4.sby
 sby -f formal/ahb.sby
+sby -f formal/ahb_abort.sby
 sby -f formal/arbiter.sby
 ```
 

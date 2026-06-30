@@ -52,9 +52,16 @@ module ahb_mem_model #(
     idx = a[LSB +: IXW];
   endfunction
 
+  // Fault-injection error word: ERR_WORD param sets the default; the TB may
+  // override it at runtime (e.g. to land the ERROR on a *middle* beat of a
+  // burst) by poking `err_word_ovr` (-1 = use the ERR_WORD parameter).
+  int err_word_ovr = -1;
+  wire           err_en = (err_word_ovr >= 0) || (ERR_WORD >= 0);
+  wire [IXW-1:0] err_ix = (err_word_ovr >= 0) ? IXW'(err_word_ovr) : IXW'(ERR_WORD);
+
   assign hready = (wait_cnt == 2'd0);
-  // HRESP=ERROR during the data phase of the configured error word (fault inject)
-  assign hresp  = (ERR_WORD >= 0) && dp_valid && (idx(dp_addr) == IXW'(ERR_WORD));
+  // HRESP=ERROR during the data phase of the selected error word (fault inject)
+  assign hresp  = err_en && dp_valid && (idx(dp_addr) == err_ix);
 
   assign hrdata = mem[idx(dp_addr)];          // valid during a read data phase
 

@@ -15,12 +15,26 @@
 // Bursts are pre-bounded by the data mover (<= MAX_BURST_BEATS, never crossing
 // a 1 KiB boundary), so a plain INCR burst is always legal. Full-word transfers
 // only (HSIZE = bus width); HRESP!=OKAY sets a sticky error.
+//
+// ERROR response on the bus: AHB-Lite signals ERROR over two cycles -- first
+// cycle HRESP=ERROR & HREADY=0, second cycle HRESP=ERROR & HREADY=1. Either way
+// the sticky `err` flag is raised (engine recovers via CTRL.ABORT). Cancelling
+// the remainder of the burst on ERROR is *optional* in the AHB-Lite spec:
+//   * EARLY_ABORT=0 (default): the bounded burst is allowed to drain; `err` is
+//     reported to the engine. Protocol-compliant and the integrated default.
+//   * EARLY_ABORT=1 (opt-in)  : on the ERROR response the adapter drives
+//     HTRANS=IDLE for the pending transfer, stops issuing further address
+//     phases and returns to H_IDLE, keeping `err` sticky. This is a bus-level
+//     latency optimisation only; the surrounding core still recovers through
+//     CTRL.ABORT, so it is left opt-in and is verified at the adapter boundary
+//     by formal/fv_ahb_abort.sv.
 //============================================================================
 
 module gmm_to_ahb #(
   parameter int unsigned AW  = dma_pkg::SADDR_W,
   parameter int unsigned DW  = dma_pkg::DATA_W,
-  parameter int unsigned BCW = dma_pkg::BCW
+  parameter int unsigned BCW = dma_pkg::BCW,
+  parameter bit          EARLY_ABORT = 1'b0   // 1 = cancel the burst on ERROR
 ) (
   input  logic            clk,
   input  logic            rst_n,
@@ -66,10 +80,16 @@ module gmm_to_ahb #(
   logic           dp_pending;   // a data phase is in progress this cycle
   logic [AW-1:0]  base;
   logic [DW-1:0]  hwdata_q;
+  logic           abort_q;      // EARLY_ABORT: burst cancelled on ERROR
 
-  // are we presenting an address phase this cycle?
+  // ERROR response seen during the active data phase (either error cycle)
+  wire derr = ((st == H_READ) || (st == H_WRITE)) && dp_pending && hresp;
+
+  // are we presenting an address phase this cycle? When EARLY_ABORT has engaged
+  // (abort_q), no further active phases are issued -> HTRANS=IDLE (burst cancel).
   logic issuing;
-  assign issuing = ((st == H_READ) || (st == H_WRITE)) && (a_idx < n);
+  assign issuing = ((st == H_READ) || (st == H_WRITE)) && (a_idx < n) &&
+                   !(EARLY_ABORT && abort_q);
 
   // ---- AHB address-phase outputs ----
   assign htrans = issuing ? ((a_idx == '0) ? HT_NONSEQ : HT_SEQ) : HT_IDLE;
@@ -101,12 +121,14 @@ module gmm_to_ahb #(
       dp_pending <= 1'b0;
       base       <= '0;
       hwdata_q   <= '0;
+      abort_q    <= 1'b0;
     end else begin
       unique case (st)
         H_IDLE: begin
           a_idx      <= '0;
           d_idx      <= '0;
           dp_pending <= 1'b0;
+          abort_q    <= 1'b0;
           base       <= gmm_address;
           n          <= gmm_burstcount;
           if (gmm_read)       st <= H_READ;
@@ -114,27 +136,39 @@ module gmm_to_ahb #(
         end
 
         H_READ, H_WRITE: begin
+          // engage the early-abort latch on the ERROR response (any error cycle)
+          if (EARLY_ABORT && derr) abort_q <= 1'b1;
+
           if (hready) begin
-            // capture write data for the just-accepted address phase
-            if ((st == H_WRITE) && issuing) hwdata_q <= gmm_writedata;
+            if (EARLY_ABORT && abort_q) begin
+              // ERROR burst-cancel: the errored data phase completes this cycle;
+              // drop the remainder of the burst and return to idle. The pending
+              // address phase was already withheld (HTRANS=IDLE via `issuing`).
+              // `err` stays sticky (set below by dphase_err).
+              st         <= H_IDLE;
+              dp_pending <= 1'b0;
+            end else begin
+              // capture write data for the just-accepted address phase
+              if ((st == H_WRITE) && issuing) hwdata_q <= gmm_writedata;
 
-            // a data phase completes this cycle
-            if (dp_pending) begin
-              if (d_idx == (n - 1'b1)) begin
-                st         <= H_IDLE;       // last beat done
-                dp_pending <= 1'b0;
-              end else begin
-                d_idx      <= d_idx + 1'b1;
+              // a data phase completes this cycle
+              if (dp_pending) begin
+                if (d_idx == (n - 1'b1)) begin
+                  st         <= H_IDLE;       // last beat done
+                  dp_pending <= 1'b0;
+                end else begin
+                  d_idx      <= d_idx + 1'b1;
+                end
               end
+
+              // accept the address phase presented this cycle
+              if (issuing) a_idx <= a_idx + 1'b1;
+
+              // next-cycle data phase exists iff we issued an address this cycle,
+              // unless we are finishing the final beat (handled above).
+              if (!(dp_pending && (d_idx == (n - 1'b1))))
+                dp_pending <= issuing;
             end
-
-            // accept the address phase presented this cycle
-            if (issuing) a_idx <= a_idx + 1'b1;
-
-            // next-cycle data phase exists iff we issued an address this cycle,
-            // unless we are finishing the final beat (handled above).
-            if (!(dp_pending && (d_idx == (n - 1'b1))))
-              dp_pending <= issuing;
           end
         end
 
@@ -143,9 +177,10 @@ module gmm_to_ahb #(
     end
   end
 
-  // sticky bus-error: HRESP=ERROR sampled on a completing data phase, clearable
-  // by clr/abort. (A fully-compliant AHB master also two-cycle-aborts the burst
-  // on ERROR; here the burst is bounded and the error is reported to the engine.)
+  // sticky bus-error: HRESP=ERROR sampled on the completing (HREADY-high) cycle
+  // of the two-cycle ERROR response, clearable by clr/abort. With EARLY_ABORT=0
+  // the bounded burst drains and the error is reported to the engine; with
+  // EARLY_ABORT=1 the burst is cancelled (HTRANS=IDLE) but `err` is still set.
   wire dphase_err = ((st == H_READ) || (st == H_WRITE)) && hready && dp_pending && hresp;
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)          err <= 1'b0;
