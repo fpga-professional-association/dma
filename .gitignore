@@ -15,6 +15,7 @@ obj_dir/
 
 # ── Formal (SymbiYosys workdirs, named after the .sby basename) ──────────────
 formal/fifo/
+formal/fifo_prove/
 formal/arbiter/
 formal/axi4/
 formal/ahb/

@@ -33,7 +33,9 @@ module fv_axi4 #(
   input logic [DW-1:0]   axi_rdata,
   input logic [1:0]      axi_rresp,
   input logic            axi_rlast,
-  input logic            axi_rvalid
+  input logic            axi_rvalid,
+  // free abort input (issue #7: abort / error-clear coverage)
+  input logic            clr
 );
   localparam int unsigned BCW = dma_pkg::BCW;
   localparam int unsigned MAXB = dma_pkg::MAX_BURST_BEATS;
@@ -52,9 +54,19 @@ module fv_axi4 #(
   logic            axi_arvalid, axi_rready, err;
   logic [DW-1:0]   axi_wdata;
   logic [DW/8-1:0] axi_wstrb;
-  wire clr = 1'b0;   // abort exercised by simulation, not this proof
 
   gmm_to_axi4 #(.AW(AW), .DW(DW), .BCW(BCW)) dut (.*);
+
+  // ---- cover witnesses (issue #7: rule out vacuous passes) ----
+  (* keep *) wire cov_rd_done = axi_rready && axi_rvalid && axi_rlast; // completed read burst
+  (* keep *) wire cov_wr_done = axi_bready && axi_bvalid;              // completed write burst (B)
+  (* keep *) wire cov_err     = err;                                   // error path is reachable
+
+  // Adapter error events reconstructed from observable AXI signals: RREADY is
+  // asserted exactly in the read-data phase (st==AX_RD) and BREADY exactly in the
+  // write-response phase (st==AX_WB), so these match the DUT's internal triggers.
+  wire fv_rresp_err = axi_rready && axi_rvalid && axi_rresp[1]; // non-OKAY read response
+  wire fv_bresp_err = axi_bready && axi_bvalid && axi_bresp[1]; // non-OKAY write response
 
   // formal reset model
   logic f_init = 1'b1;  always @(posedge clk) f_init <= 1'b0;
@@ -128,5 +140,16 @@ module fv_axi4 #(
 
     // ---------- read data only inside the read-data phase ----------
     if (gmm_readdatavalid) assert (axi_rvalid);
+
+    // ---------- error response: err set iff a non-OKAY response was seen, ----------
+    // ---------- cleared by abort, sticky otherwise (issue #7) ----------------------
+    if (past_ok)
+      a_err_track : assert (err == ($past(clr) ? 1'b0
+                          : ($past(err) || $past(fv_rresp_err) || $past(fv_bresp_err))));
+
+    // ---------- cover witnesses (reachability checked by run_formal.sh / sby) -------
+    c_rd_done : cover (cov_rd_done);
+    c_wr_done : cover (cov_wr_done);
+    c_err     : cover (cov_err);
   end
 endmodule

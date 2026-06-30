@@ -33,7 +33,9 @@ module fv_ahb #(
   // free AHB slave responses
   input logic [DW-1:0]   hrdata,
   input logic            hready,
-  input logic            hresp
+  input logic            hresp,
+  // free abort input (issue #7: abort / error-clear coverage)
+  input logic            clr
 );
   localparam int unsigned BCW  = dma_pkg::BCW;
   localparam int unsigned MAXB = dma_pkg::MAX_BURST_BEATS;
@@ -48,7 +50,6 @@ module fv_ahb #(
   logic [1:0]      htrans;
   logic            hwrite, err;
   logic [DW-1:0]   hwdata;
-  wire clr = 1'b0;   // abort exercised by simulation, not this proof
 
   gmm_to_ahb #(.AW(AW), .DW(DW), .BCW(BCW)) dut (.*);
 
@@ -65,6 +66,12 @@ module fv_ahb #(
   end
   // completing (HREADY-high) cycle of a two-cycle ERROR response
   wire dp_err_complete = dp && hready && hresp;
+
+  // ---- cover witnesses (issue #7: rule out vacuous passes) ----
+  (* keep *) wire cov_rd_seq  = !hwrite && (htrans == HT_SEQ); // read burst NONSEQ->SEQ chain
+  (* keep *) wire cov_wr_seq  =  hwrite && (htrans == HT_SEQ); // write burst NONSEQ->SEQ chain
+  (* keep *) wire cov_rdvalid = gmm_readdatavalid;            // a read data phase completes
+  (* keep *) wire cov_err     = err;                          // error path is reachable
 
   // formal reset model
   logic f_init = 1'b1;  always @(posedge clk) f_init <= 1'b0;
@@ -126,12 +133,28 @@ module fv_ahb #(
     // a read-data beat only when a data phase completes
     if (gmm_readdatavalid) assert (hready);
 
-    // ---------- reaction to the ERROR response ----------
+    // ---------- reaction to the modelled two-cycle ERROR (issue #11) ----------
     // (control held stable across the HREADY-low error cycle is covered by the
     //  "control held stable while the slave is not ready" assertion above.)
     // the sticky engine error is raised the cycle after a completed ERROR phase
-    if (past_ok && $past(dp_err_complete)) assert (err);
-    // ... and stays set (no clr exercised in this proof)
-    if (past_ok && $past(err))            assert (err);
+    // (unless an abort intervened -- clr is now a free input, issue #7).
+    if (past_ok && !$past(clr) && $past(dp_err_complete)) assert (err);
+
+    // ---------- sticky bus-error behaviour (issue #7), proven from observable ------
+    // ---------- signals only: HRESP=1 on a ready data beat sets err; abort clears --
+    if (past_ok && $past(clr))                        a_err_clr    : assert (!err);
+    if (past_ok && !$past(clr) && $past(err))         a_err_sticky : assert (err);
+    // err only ever rises after a non-OKAY response on a ready cycle
+    if (past_ok && !$past(clr) && !$past(err) && err)
+                                                      a_err_cause  : assert ($past(hready) && $past(hresp));
+    // a read data beat completing with HRESP=ERROR must raise err
+    if (past_ok && !$past(clr) && $past(gmm_readdatavalid) && $past(hresp))
+                                                      a_err_rdset  : assert (err);
+
+    // ---------- cover witnesses (reachability checked by run_formal.sh / sby) -------
+    c_rd_seq  : cover (cov_rd_seq);
+    c_wr_seq  : cover (cov_wr_seq);
+    c_rdvalid : cover (cov_rdvalid);
+    c_err     : cover (cov_err);
   end
 endmodule
