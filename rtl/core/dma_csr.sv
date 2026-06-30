@@ -27,7 +27,6 @@ module dma_csr
   // -------- control out (to engine) --------
   output logic                  go,            // 1-cycle pulse
   output logic                  abort,         // 1-cycle pulse
-  output logic                  irq_en,
   output logic [HADDR_W-1:0]    desc_base,
   output logic [LEN_W-1:0]      desc_count,
 
@@ -67,17 +66,19 @@ module dma_csr
   logic [CSR_DATA_W-1:0] scratch_q;
 
   assign csr_waitrequest = 1'b0;
-  assign irq_en          = irq_en_q;
   assign desc_base       = {desc_base_hi_q, desc_base_lo_q};
   assign desc_count      = desc_count_q;
 
   wire wr      = csr_write;
   wire is_ctrl = wr && (csr_address == A_CTRL);
 
-  // set/clear masks for the RW1C IRQ_STATUS register (bit1=ERROR, bit0=DONE)
+  // set/clear masks for the RW1C IRQ_STATUS register.  Bit positions come from
+  // dma_pkg (IRQ_DONE/IRQ_ERROR) so the register layout is single-sourced.
   logic [1:0] irq_set, irq_clr;
   always_comb begin
-    irq_set = {irq_error_set, irq_done_set};
+    irq_set            = '0;
+    irq_set[IRQ_DONE]  = irq_done_set;
+    irq_set[IRQ_ERROR] = irq_error_set;
     irq_clr = (wr && (csr_address == A_IRQ_ST)) ? csr_writedata[1:0] : 2'b00;
   end
 
@@ -111,12 +112,23 @@ module dma_csr
 
   assign irq = irq_en_q & (|(irq_status_q & irq_enable_q));
 
+  // STATUS read-back word, assembled from the dma_pkg bit positions so the CSR
+  // layout is single-sourced and cannot drift from docs/register_map.md.
+  logic [CSR_DATA_W-1:0] status_word;
+  always_comb begin
+    status_word                      = '0;
+    status_word[ST_BUSY]             = busy;
+    status_word[ST_DONE]             = done;
+    status_word[ST_ERROR]            = error;
+    status_word[ST_STATE_LSB +: 4]   = state;   // [7:4] engine FSM state
+  end
+
   // ------- read path: 1-cycle latency -------
   logic [CSR_DATA_W-1:0] rdata_next;
   always_comb begin
     case (csr_address)
       A_CTRL:    rdata_next = {{(CSR_DATA_W-3){1'b0}}, irq_en_q, 2'b00};
-      A_STATUS:  rdata_next = {{(CSR_DATA_W-8){1'b0}}, state, 1'b0, error, done, busy};
+      A_STATUS:  rdata_next = status_word;
       A_BASE_LO: rdata_next = desc_base_lo_q;
       A_BASE_HI: rdata_next = desc_base_hi_q;
       A_COUNT:   rdata_next = desc_count_q;

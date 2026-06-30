@@ -15,7 +15,11 @@ RTL="rtl/pkg/dma_pkg.sv \
 rc=0
 for cfg in AVALON AXI4 AHB; do
   printf "lint %-7s : " "$cfg"
-  if verilator --lint-only -sv -Wall -Wno-DECLFILENAME -Wno-UNUSED -Wno-PINCONNECTEMPTY \
+  # -Wno-UNUSED is intentionally NOT waived project-wide: legitimately-unused
+  # signals (the unselected SYS-bus ports, reserved descriptor bits, AXI id/resp
+  # fields) carry narrowly-scoped /* verilator lint_off UNUSEDSIGNAL */ pragmas in
+  # the RTL instead. -Wno-PINCONNECTEMPTY/-Wno-DECLFILENAME remain as documented.
+  if verilator --lint-only -sv -Wall -Wno-DECLFILENAME -Wno-PINCONNECTEMPTY \
        -GSYS_IF="\"$cfg\"" -Irtl/pkg --top-module pcie_dma_top $RTL 2>/tmp/lint_$cfg.log; then
     echo "clean"
   else

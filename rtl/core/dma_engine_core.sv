@@ -58,6 +58,17 @@ module dma_engine_core
   localparam int unsigned LBE  = $clog2(BE_W);
   localparam int unsigned LDB  = $clog2(DESC_BYTES);   // descriptor alignment
 
+  // ---- elaboration-time parameter legality checks (dma_pkg invariants) ----
+  // Instantiated only when violated; a legal config produces no generate block.
+  if ((DESC_BITS % DATA_W) != 0) begin : gen_dataw_div_check
+    $error("dma_pkg: DATA_W (%0d) must divide the %0d-bit descriptor word",
+           DATA_W, DESC_BITS);
+  end
+  if ((MAX_BURST_BEATS * BE_W) > 1024) begin : gen_burst_boundary_check
+    $error("dma_pkg: MAX_BURST_BEATS*BE_W (%0d bytes) must be <= 1024 (1 KiB boundary)",
+           MAX_BURST_BEATS * BE_W);
+  end
+
   // -------- control / status bundle --------
   logic               go, abort;
   logic [HADDR_W-1:0] desc_base;
@@ -88,7 +99,7 @@ module dma_engine_core
   logic               fm_readdatavalid;
 
   // -------- data mover wires --------
-  logic               m_start, m_busy, m_done;
+  logic               m_start, m_done;
   logic [HADDR_W-1:0] m_host_addr;
   logic [SADDR_W-1:0] m_sys_addr;
   logic [LEN_W-1:0]   m_length;
@@ -117,7 +128,7 @@ module dma_engine_core
     .csr_address(csr_address), .csr_read(csr_read), .csr_write(csr_write),
     .csr_writedata(csr_writedata), .csr_readdata(csr_readdata),
     .csr_readdatavalid(csr_readdatavalid), .csr_waitrequest(csr_waitrequest),
-    .go(go), .abort(abort), .irq_en(/*unused: CSR forms irq internally*/),
+    .go(go), .abort(abort),
     .desc_base(desc_base), .desc_count(desc_count),
     .busy(busy), .done(done_sticky), .error(error_sticky),
     .err_code(err_code), .cur_index(cur_index), .state(state_dbg),
@@ -147,7 +158,7 @@ module dma_engine_core
     .clk(clk), .rst_n(rst_n), .clr(clr),
     .start(m_start), .host_addr(m_host_addr), .sys_addr(m_sys_addr),
     .length(m_length), .dir(m_dir),
-    .busy(m_busy), .done(m_done),
+    .busy(/* unused: core derives busy from estate below */), .done(m_done),
     .h_address(mh_address), .h_read(mh_read), .h_write(mh_write),
     .h_writedata(mh_writedata), .h_byteenable(mh_byteenable),
     .h_burstcount(mh_burstcount), .h_waitrequest(mh_waitrequest),

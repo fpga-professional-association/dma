@@ -40,6 +40,9 @@ module pcie_dma_top
   input  logic                  host_readdatavalid,
 
   // ================= SYS Avalon-MM master (SYS_IF=="AVALON") =================
+  // Inputs of the non-selected SYS bus are legitimately unused; waive UNUSEDSIGNAL
+  // for this whole group (inert for the outputs and for the selected config).
+  /* verilator lint_off UNUSEDSIGNAL */
   output logic [SADDR_W-1:0]    avm_address,
   output logic                  avm_read,
   output logic                  avm_write,
@@ -49,8 +52,10 @@ module pcie_dma_top
   input  logic                  avm_waitrequest,
   input  logic [DATA_W-1:0]     avm_readdata,
   input  logic                  avm_readdatavalid,
+  /* verilator lint_on UNUSEDSIGNAL */
 
   // ================= SYS AXI4 master (SYS_IF=="AXI4") =================
+  /* verilator lint_off UNUSEDSIGNAL */  // unused inputs when this SYS bus not selected
   output logic [0:0]            axi_awid,
   output logic [SADDR_W-1:0]    axi_awaddr,
   output logic [7:0]            axi_awlen,
@@ -84,8 +89,10 @@ module pcie_dma_top
   input  logic                  axi_rlast,
   input  logic                  axi_rvalid,
   output logic                  axi_rready,
+  /* verilator lint_on UNUSEDSIGNAL */
 
   // ================= SYS AHB-Lite master (SYS_IF=="AHB") =================
+  /* verilator lint_off UNUSEDSIGNAL */  // unused inputs when this SYS bus not selected
   output logic [SADDR_W-1:0]    haddr,
   output logic [2:0]            hburst,
   output logic [2:0]            hsize,
@@ -95,6 +102,7 @@ module pcie_dma_top
   input  logic [DATA_W-1:0]     hrdata,
   input  logic                  hready,
   input  logic                  hresp,
+  /* verilator lint_on UNUSEDSIGNAL */
 
   // ================= misc =================
   output logic                  irq,

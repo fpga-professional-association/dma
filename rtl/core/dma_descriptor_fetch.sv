@@ -108,7 +108,9 @@ module dma_descriptor_fetch
   end
 
   // assemble little-endian descriptor word and decode
+  /* verilator lint_off UNUSEDSIGNAL */  // reserved bytes + unused-high sys_addr bits
   logic [DESC_BITS-1:0] d;
+  /* verilator lint_on UNUSEDSIGNAL */
   always_comb begin
     d = '0;
     for (int k = 0; k < DESC_BEATS; k++)
