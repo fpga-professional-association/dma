@@ -1,0 +1,15 @@
+[options]
+mode bmc
+depth 24
+
+[engines]
+smtbmc z3
+
+[script]
+read_verilog -sv -formal -I. dma_pkg.sv dma_descriptor_fetch.sv fv_descriptor_fetch.sv
+prep -top fv_descriptor_fetch
+
+[files]
+../rtl/pkg/dma_pkg.sv
+../rtl/core/dma_descriptor_fetch.sv
+fv_descriptor_fetch.sv

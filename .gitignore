@@ -18,6 +18,9 @@ formal/fifo/
 formal/arbiter/
 formal/axi4/
 formal/ahb/
+formal/avalon/
+formal/data_mover/
+formal/descriptor_fetch/
 
 # ── Quartus / Intel-Altera build outputs ─────────────────────────────────────
 quartus/db/
