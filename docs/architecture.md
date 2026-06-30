@@ -109,3 +109,9 @@ GMM contract is designed to drop into such a bridge unchanged.
 * **Descriptor ring base** must be 32-byte (`DESC_BYTES`) aligned; enforced at GO
   (`ERR_BAD_BASE`). This also guarantees descriptor fetches never cross a 4 KiB
   PCIe boundary.
+* **No in-band per-descriptor status writeback.** Descriptor bytes 24..31 are
+  strictly reserved (must be 0); the engine never writes completion/error status
+  back into the host ring and never clears `C_VALID`. Software signals/observes
+  completion exclusively through the global `STATUS` register, the
+  `REG_DESC_INDEX` completed-descriptor count, and the optional per-descriptor
+  `C_IRQ` interrupt.
