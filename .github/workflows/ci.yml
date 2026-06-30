@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: lint (Verilator, x3 bus IF)
+            pkgs: verilator
+            run: ./scripts/lint.sh
+          - name: simulate (Icarus, 6 configs)
+            pkgs: iverilog
+            run: ./scripts/run_sim.sh
+          - name: formal (yosys SAT BMC)
+            pkgs: yosys
+            run: ./scripts/run_formal.sh
+          - name: synth (yosys gate-map)
+            pkgs: yosys
+            run: ./scripts/run_synth.sh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ${{ matrix.pkgs }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ${{ matrix.pkgs }}
+
+      - name: Tool versions
+        run: |
+          for t in verilator iverilog yosys; do
+            command -v "$t" >/dev/null 2>&1 && { printf '%s: ' "$t"; "$t" --version 2>&1 | head -1; } || true
+          done
+
+      - name: ${{ matrix.run }}
+        run: ${{ matrix.run }}
