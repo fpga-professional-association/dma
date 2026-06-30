@@ -36,7 +36,7 @@ module dma_engine_core
   input  logic                  host_waitrequest,
   input  logic [DATA_W-1:0]     host_readdata,
   input  logic                  host_readdatavalid,
-  input  logic [1:0]            host_response,  // PCIe completion status (00=OKAY) on read beats
+  input  logic [HRESP_W-1:0]    host_response,  // PCIe completion status (00=OKAY) on read beats
 
   // -------- SYS GMM master (local system bus) --------
   output logic [SADDR_W-1:0]    sys_address,
