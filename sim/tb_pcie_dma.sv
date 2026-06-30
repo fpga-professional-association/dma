@@ -344,8 +344,10 @@ module tb_pcie_dma;
     for (i = 0; i < LEN0/(DW/8); i++)
       check("post-abort H2C", sys_mem.mem[widx({32'b0,SYS_DST})+i], host_mem.mem[widx(HOST_SRC)+i]);
 
-    // F) SYS bus error (AHB only): a write to the fault-injected word must raise
-    //    STATUS.ERROR / ERR_INFO==ERR_SYS_BUS, and ABORT must clear sys_bus_error.
+    // F) SYS bus error (AHB only): a write whose FIRST beat hits the fault-
+    //    injected word (0x800 is 1 KiB-aligned, so it is a burst boundary) must
+    //    raise STATUS.ERROR / ERR_INFO==ERR_SYS_BUS, and ABORT must clear
+    //    sys_bus_error.
 `ifdef USE_AHB
     write_desc(0, HOST_SRC, 32'h0000_0800, LEN0, (32'h1<<C_VALID));   // H2C -> SYS err word
     launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
@@ -353,6 +355,20 @@ module tb_pcie_dma;
     csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_SYS_BUS", ec, ERR_SYS_BUS);
     abort_clear;
     if (sys_bus_error) begin $display("  ABORT did not clear sys_bus_error"); errors++; end
+
+    // G) MID-BURST SYS bus error (AHB only): inject the two-cycle ERROR on a
+    //    *middle* beat of the write burst. The burst from the 16-beat-aligned
+    //    0x100 is 0x100..0x178; 0x128 is beat 5 of that burst (not the first
+    //    beat, not a burst boundary). The adapter must still report the sticky
+    //    error (ERR_SYS_BUS) and ABORT must recover the datapath.
+    sys_mem.err_word_ovr = widx(64'h0000_0128);
+    write_desc(0, HOST_SRC, 32'h0000_0100, LEN0, (32'h1<<C_VALID));   // H2C -> SYS 0x100
+    launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
+    if (!st[ST_ERROR]) begin $display("  mid-burst SYS error not reported"); errors++; end
+    csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_SYS_BUS(mid-burst)", ec, ERR_SYS_BUS);
+    abort_clear;
+    if (sys_bus_error) begin $display("  ABORT did not clear mid-burst sys_bus_error"); errors++; end
+    sys_mem.err_word_ovr = -1;     // restore default fault injection
 `endif
 
     // ---- report ----
