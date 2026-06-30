@@ -32,7 +32,7 @@ jobs:
             pkgs: yosys
             run: ./scripts/run_synth.sh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install ${{ matrix.pkgs }}
         run: |
