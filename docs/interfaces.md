@@ -4,7 +4,10 @@ This document is the normative timing/signal contract for every bus boundary in
 the design. Adapters and simulation memory models **must** conform exactly.
 
 All ports are synchronous to a single rising-edge clock `clk` with an active-low,
-synchronously-deasserted reset `rst_n`.
+synchronously-deasserted reset `rst_n`. The integrator guarantees synchronous
+deassertion, or sets `pcie_dma_top` `RESET_SYNC=1` to use the built-in 2-FF
+`reset_sync` (see `docs/architecture.md` IR-1). Running the SYS bus on a separate
+clock requires a dual-clock bridge (IR-2).
 
 ---
 

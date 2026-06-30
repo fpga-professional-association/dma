@@ -14,7 +14,13 @@
 module pcie_dma_top
   import dma_pkg::*;
 #(
-  parameter SYS_IF = "AVALON"            // "AVALON" | "AXI4" | "AHB"
+  parameter      SYS_IF      = "AVALON", // "AVALON" | "AXI4" | "AHB"
+  // Optional reset synchronizer (issue #14 productization). Default 0 keeps the
+  // historical behaviour: rst_n is used directly by the flops (async assert,
+  // caller guarantees synchronous deassert). Set to 1 to drive the core/adapter
+  // through an internal 2-FF reset_sync so deassertion is synchronized to clk.
+  parameter int unsigned RESET_SYNC        = 0,
+  parameter int unsigned RESET_SYNC_STAGES = 2
 ) (
   input  logic                  clk,
   input  logic                  rst_n,
@@ -105,6 +111,23 @@ module pcie_dma_top
   logic               adapter_err, sys_clr_w;
   assign sys_bus_error = adapter_err;
 
+  // -------- optional reset synchronizer (issue #14) --------
+  // rst_n_int drives the core and the selected adapter. With RESET_SYNC=0 it is
+  // wired straight from the rst_n port (bit-identical to the original design);
+  // with RESET_SYNC=1 a 2-FF synchronizer makes the deassertion synchronous to
+  // clk. The SDC set_false_path -from rst_n still applies (it covers the async
+  // input to the first synchronizer flop).
+  logic rst_n_int;
+  generate
+    if (RESET_SYNC != 0) begin : g_rst_sync
+      reset_sync #(.STAGES(RESET_SYNC_STAGES)) u_rst_sync (
+        .clk(clk), .arst_n(rst_n), .rst_n(rst_n_int)
+      );
+    end else begin : g_rst_direct
+      assign rst_n_int = rst_n;   // default: rst_n used directly by the flops
+    end
+  endgenerate
+
   // -------- core SYS GMM master (driven into the selected adapter) --------
   logic [SADDR_W-1:0] sg_address;
   logic               sg_read, sg_write;
@@ -119,7 +142,7 @@ module pcie_dma_top
   // DMA core
   // =================================================================
   dma_engine_core u_core (
-    .clk(clk), .rst_n(rst_n),
+    .clk(clk), .rst_n(rst_n_int),
     .csr_address(csr_address), .csr_read(csr_read), .csr_write(csr_write),
     .csr_writedata(csr_writedata), .csr_readdata(csr_readdata),
     .csr_readdatavalid(csr_readdatavalid), .csr_waitrequest(csr_waitrequest),
@@ -142,7 +165,7 @@ module pcie_dma_top
   generate
     if (SYS_IF == "AXI4") begin : g_axi
       gmm_to_axi4 #(.AW(SADDR_W), .DW(DATA_W), .BCW(BCW)) u_adapt (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n_int),
         .gmm_address(sg_address), .gmm_read(sg_read), .gmm_write(sg_write),
         .gmm_writedata(sg_writedata), .gmm_byteenable(sg_byteenable),
         .gmm_burstcount(sg_burstcount), .gmm_waitrequest(sg_waitrequest),
@@ -168,7 +191,7 @@ module pcie_dma_top
 
     end else if (SYS_IF == "AHB") begin : g_ahb
       gmm_to_ahb #(.AW(SADDR_W), .DW(DATA_W), .BCW(BCW)) u_adapt (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n_int),
         .gmm_address(sg_address), .gmm_read(sg_read), .gmm_write(sg_write),
         .gmm_writedata(sg_writedata), .gmm_byteenable(sg_byteenable),
         .gmm_burstcount(sg_burstcount), .gmm_waitrequest(sg_waitrequest),
@@ -186,7 +209,7 @@ module pcie_dma_top
 
     end else begin : g_avalon
       gmm_to_avalon #(.AW(SADDR_W), .DW(DATA_W), .BCW(BCW)) u_adapt (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n_int),
         .gmm_address(sg_address), .gmm_read(sg_read), .gmm_write(sg_write),
         .gmm_writedata(sg_writedata), .gmm_byteenable(sg_byteenable),
         .gmm_burstcount(sg_burstcount), .gmm_waitrequest(sg_waitrequest),

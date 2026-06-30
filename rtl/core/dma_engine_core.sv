@@ -59,7 +59,8 @@ module dma_engine_core
   localparam int unsigned LDB  = $clog2(DESC_BYTES);   // descriptor alignment
 
   // -------- control / status bundle --------
-  logic               go, abort;
+  logic               go, abort, stop;
+  logic               stop_pending;   // issue #14: latched graceful-stop request
   logic [HADDR_W-1:0] desc_base;
   logic [LEN_W-1:0]   desc_count;
   logic               busy, done_sticky, error_sticky;
@@ -117,7 +118,7 @@ module dma_engine_core
     .csr_address(csr_address), .csr_read(csr_read), .csr_write(csr_write),
     .csr_writedata(csr_writedata), .csr_readdata(csr_readdata),
     .csr_readdatavalid(csr_readdatavalid), .csr_waitrequest(csr_waitrequest),
-    .go(go), .abort(abort), .irq_en(/*unused: CSR forms irq internally*/),
+    .go(go), .abort(abort), .stop(stop), .irq_en(/*unused: CSR forms irq internally*/),
     .desc_base(desc_base), .desc_count(desc_count),
     .busy(busy), .done(done_sticky), .error(error_sticky),
     .err_code(err_code), .cur_index(cur_index), .state(state_dbg),
@@ -221,6 +222,7 @@ module dma_engine_core
       m_start       <= 1'b0;
       irq_done_set  <= 1'b0;
       irq_error_set <= 1'b0;
+      stop_pending  <= 1'b0;
     end else begin
       // default pulse clears
       f_start       <= 1'b0;
@@ -228,10 +230,15 @@ module dma_engine_core
       irq_done_set  <= 1'b0;
       irq_error_set <= 1'b0;
 
+      // issue #14: latch a graceful-stop request raised while a ring is in
+      // flight. It is consumed at the next descriptor boundary (E_RUN).
+      if (stop && busy) stop_pending <= 1'b1;
+
       if (abort) begin
         estate       <= E_IDLE;
         done_sticky  <= 1'b0;
         error_sticky <= 1'b0;
+        stop_pending <= 1'b0;     // hard reset supersedes a pending graceful stop
       end else begin
         unique case (estate)
           E_IDLE: begin
@@ -242,6 +249,7 @@ module dma_engine_core
               done_sticky  <= 1'b0;
               error_sticky <= 1'b0;
               err_code     <= ERR_NONE[7:0];
+              stop_pending <= 1'b0;     // fresh run ignores any stale stop request
               if (desc_base[LDB-1:0] != '0) begin
                 err_code <= ERR_BAD_BASE[7:0];   // ring base must be DESC_BYTES aligned
                 estate   <= E_ERROR;
@@ -286,6 +294,12 @@ module dma_engine_core
                 if (cur_irq) irq_done_set <= 1'b1;   // per-descriptor IRQ
                 if (cur_last || ((idx + 1'b1) == cnt)) begin
                   estate <= E_DONE;
+                end else if (stop_pending) begin
+                  // issue #14: graceful stop -- the in-flight descriptor has
+                  // completed cleanly; halt to DONE without fetching the next.
+                  // DESC_INDEX (< DESC_COUNT) marks where the ring was stopped.
+                  estate       <= E_DONE;
+                  stop_pending <= 1'b0;
                 end else begin
                   f_start <= 1'b1;         // fetch next descriptor
                   estate  <= E_FETCH;
@@ -296,14 +310,16 @@ module dma_engine_core
 
           E_DONE: begin
             done_sticky  <= 1'b1;
-            irq_done_set <= 1'b1;          // ring-completion IRQ
+            irq_done_set <= 1'b1;          // ring-completion (or graceful-stop) IRQ
             estate       <= E_IDLE;
+            stop_pending <= 1'b0;
           end
 
           E_ERROR: begin
             error_sticky  <= 1'b1;
             irq_error_set <= 1'b1;
             estate        <= E_IDLE;
+            stop_pending  <= 1'b0;
           end
 
           default: estate <= E_IDLE;

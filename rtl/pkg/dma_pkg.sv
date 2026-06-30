@@ -110,6 +110,11 @@ package dma_pkg;
   parameter int unsigned CTRL_GO     = 0;      // 1 = start processing the descriptor ring
   parameter int unsigned CTRL_ABORT  = 1;      // 1 = abort/clear engine (self-clearing)
   parameter int unsigned CTRL_IRQ_EN = 2;      // global IRQ enable
+  // issue #14: graceful stop. Self-clearing request that lets the engine finish
+  // the descriptor currently in flight (its in-flight bus burst is NOT
+  // truncated) and then halt to DONE/IDLE without fetching the next descriptor.
+  // Contrast with CTRL_ABORT, which is a hard datapath reset. See register_map.md.
+  parameter int unsigned CTRL_STOP   = 3;      // 1 = graceful stop after current descriptor
 
   // STATUS register bit positions
   parameter int unsigned ST_BUSY  = 0;

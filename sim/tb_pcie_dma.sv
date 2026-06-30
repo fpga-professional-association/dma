@@ -92,7 +92,15 @@ module tb_pcie_dma;
   // =================================================================
   // DUT
   // =================================================================
-  pcie_dma_top #(.SYS_IF(`SYSIF_STR)) dut (
+  // issue #14: +define+RESET_SYNC_EN drives the core/adapter through the optional
+  // 2-FF reset synchronizer (RESET_SYNC=1). RST_SYNC=0 is bit-identical to the
+  // historical direct-rst_n default.
+`ifdef RESET_SYNC_EN
+  localparam int RST_SYNC = 1;
+`else
+  localparam int RST_SYNC = 0;
+`endif
+  pcie_dma_top #(.SYS_IF(`SYSIF_STR), .RESET_SYNC(RST_SYNC)) dut (
     .clk, .rst_n,
     .csr_address, .csr_read, .csr_write, .csr_writedata,
     .csr_readdata, .csr_readdatavalid, .csr_waitrequest,
@@ -168,6 +176,7 @@ module tb_pcie_dma;
   localparam logic [63:0] HOST_DST       = 64'h0000_3000; // C2H dst
   localparam logic [31:0] SYS_DST        = 32'h0000_0100; // H2C dst
   localparam logic [31:0] SYS_SRC        = 32'h0000_0200; // C2H src
+  localparam logic [31:0] SYS_STOP_DST   = 32'h0000_0600; // graceful-stop desc1 dst (issue #14)
   localparam int LEN0 = 256;   // bytes, H2C
   localparam int LEN1 = 520;   // bytes, C2H (crosses 0x400 boundary on sys read)
 
@@ -227,7 +236,7 @@ module tb_pcie_dma;
   // =================================================================
   // Stimulus
   // =================================================================
-  logic [31:0] st, ver, scr, ec;
+  logic [31:0] st, ver, scr, ec, gi;
   int i;
 
   initial begin
@@ -354,6 +363,45 @@ module tb_pcie_dma;
     abort_clear;
     if (sys_bus_error) begin $display("  ABORT did not clear sys_bus_error"); errors++; end
 `endif
+
+    // G) graceful stop (issue #14): CTRL.STOP lets the descriptor in flight
+    //    finish cleanly (its bus burst is NOT truncated, unlike ABORT) and then
+    //    halts the ring before the next descriptor. Launch a 2-descriptor H2C
+    //    ring to two DISTINCT sys destinations, request STOP as soon as BUSY,
+    //    and require: DONE (no ERROR); DESC_INDEX==1 (only desc0 completed,
+    //    1 < DESC_COUNT==2); desc0 data correct; desc1's destination untouched;
+    //    and the engine cleanly restartable afterwards.
+    for (i = 0; i < LEN0/(DW/8); i++) begin
+      sys_mem.mem[widx({32'b0,SYS_DST})+i]      = 64'h0;   // desc0 dst, will be written
+      sys_mem.mem[widx({32'b0,SYS_STOP_DST})+i] = 64'h0;   // desc1 dst, must stay 0
+    end
+    write_desc(0, HOST_SRC, SYS_DST,      LEN0, (32'h1<<C_VALID));
+    write_desc(1, HOST_SRC, SYS_STOP_DST, LEN0, (32'h1<<C_VALID)|(32'h1<<C_LAST));
+    csr_wr(REG_DESC_BASE_LO[7:0], HOST_DESC_BASE[31:0]);
+    csr_wr(REG_DESC_BASE_HI[7:0], 32'd0);
+    csr_wr(REG_DESC_COUNT[7:0],   32'd2);
+    csr_wr(REG_CTRL[7:0], (32'h1<<CTRL_GO));
+    st = 0; i = 0;
+    while ((i < 2000) && !st[ST_BUSY]) begin csr_rd(REG_STATUS[7:0], st); i++; end
+    csr_wr(REG_CTRL[7:0], (32'h1<<CTRL_STOP));   // request graceful stop
+    st = 0; i = 0;
+    while ((i < 20000) && (st[ST_DONE] !== 1'b1) && (st[ST_ERROR] !== 1'b1)) begin
+      csr_rd(REG_STATUS[7:0], st); i++;
+    end
+    if (!st[ST_DONE]) begin $display("  graceful STOP did not reach DONE"); errors++; end
+    if (st[ST_ERROR]) begin $display("  graceful STOP raised ERROR");      errors++; end
+    csr_rd(REG_DESC_INDEX[7:0], gi);
+    if (gi !== 32'd1) begin $display("  graceful STOP: DESC_INDEX=%0d exp 1", gi); errors++; end
+    for (i = 0; i < LEN0/(DW/8); i++)   // desc0 completed -> correct data
+      check("stop desc0", sys_mem.mem[widx({32'b0,SYS_DST})+i], host_mem.mem[widx(HOST_SRC)+i]);
+    for (i = 0; i < LEN0/(DW/8); i++)   // desc1 never ran -> dst untouched
+      check("stop desc1 idle", sys_mem.mem[widx({32'b0,SYS_STOP_DST})+i], 64'h0);
+    // engine must be cleanly restartable after a graceful stop
+    write_desc(0, HOST_SRC, SYS_STOP_DST, LEN0, (32'h1<<C_VALID)|(32'h1<<C_LAST));
+    launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
+    if (!st[ST_DONE]) begin $display("  restart after graceful STOP hung"); errors++; end
+    for (i = 0; i < LEN0/(DW/8); i++)
+      check("post-stop H2C", sys_mem.mem[widx({32'b0,SYS_STOP_DST})+i], host_mem.mem[widx(HOST_SRC)+i]);
 
     // ---- report ----
     if (sys_bus_error) begin $display("  sys_bus_error asserted"); errors++; end
