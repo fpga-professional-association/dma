@@ -121,8 +121,14 @@ See `docs/register_map.md` and `docs/descriptor_format.md`. In short:
 * **Formal** — bounded proofs (BMC depth 22, yosys SAT) of FIFO ordering/data
   integrity & safety, arbiter mutual exclusion, AXI4 handshake/burst compliance,
   and AHB-Lite legality. See `formal/README.md`.
-* **Synthesis** — Verilator `-Wall` clean for all three configurations; protocol
-  blocks gate-map with yosys; Quartus project provided.
+* **Synthesis** — Verilator `-Wall` clean for all three configurations; yosys
+  gate-maps the leaf protocol blocks *and* the full core datapath (`dma_csr`,
+  `dma_descriptor_fetch`, `dma_data_mover`, `dma_engine_core`) plus the
+  integrated `pcie_dma_top` — `scripts/run_synth.sh` rewrites the
+  `import dma_pkg::*;` modules to explicit `dma_pkg::` scope in a throwaway work
+  dir so the open-source (no-Verific) yosys front-end parses them, leaving the
+  RTL untouched; the same script will additionally cross-check via `sv2v` when
+  that tool is installed. Quartus project provided for vendor synthesis + STA.
 * **Adversarial review** — the RTL/formal/TB were put through a multi-agent
   review (7 dimensions, each finding independently verified); the confirmed
   defects — incomplete abort (FIFO/arbiter), AXI4 AW-before-W serialization,
