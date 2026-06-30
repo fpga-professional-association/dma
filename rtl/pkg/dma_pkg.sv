@@ -130,6 +130,17 @@ package dma_pkg;
   parameter int unsigned ERR_DESC_INV  = 32'h03; // descriptor C_VALID == 0
   parameter int unsigned ERR_BAD_BASE  = 32'h04; // desc ring base not DESC_BYTES aligned
   parameter int unsigned ERR_SYS_BUS   = 32'h05; // SYS bus (AXI/AHB) error response during a transfer
+  parameter int unsigned ERR_HOST_BUS  = 32'h06; // HOST/PCIe bus error response (UR/CA/poison) during a fetch or transfer
+
+  //--------------------------------------------------------------------------
+  // HOST (PCIe) read-completion response  (Avalon-MM `response[1:0]`)
+  //--------------------------------------------------------------------------
+  // The HOST GMM master carries an optional per-beat completion response that
+  // accompanies `readdatavalid`, mirroring the PCIe Hard IP TXS status. Any
+  // code other than OKAY (Unsupported Request / Completer Abort / poisoned TLP)
+  // is captured as ERR_HOST_BUS.
+  parameter int unsigned HRESP_W    = 2;
+  parameter logic [1:0]  HRESP_OKAY = 2'b00; // OKAY; all other codes are errors
 
   parameter int unsigned VERSION_ID = 32'h0D3A_0101; // "DMA" v1.1
 

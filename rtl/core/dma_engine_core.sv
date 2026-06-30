@@ -36,6 +36,7 @@ module dma_engine_core
   input  logic                  host_waitrequest,
   input  logic [DATA_W-1:0]     host_readdata,
   input  logic                  host_readdatavalid,
+  input  logic [1:0]            host_response,  // PCIe completion status (00=OKAY) on read beats
 
   // -------- SYS GMM master (local system bus) --------
   output logic [SADDR_W-1:0]    sys_address,
@@ -51,6 +52,9 @@ module dma_engine_core
   // -------- SYS bus error / clear (to/from the selected adapter) --------
   input  logic                  sys_bus_err,    // sticky bus-error from adapter
   output logic                  sys_clr,        // clears the adapter's sticky error
+
+  // -------- HOST bus error (PCIe completion status) --------
+  output logic                  host_bus_error, // sticky: a HOST read returned a non-OK response
 
   // -------- interrupt --------
   output logic                  irq
@@ -118,8 +122,10 @@ module dma_engine_core
 
   logic               clr;        // soft-clear pulse to sub-blocks (abort)
   logic               sys_err_latched;
+  logic               host_err_latched;
 
-  assign sys_clr = clr;           // abort clears the adapter's sticky error too
+  assign sys_clr        = clr;           // abort clears the adapter's sticky error too
+  assign host_bus_error = host_err_latched; // surfaced at top, cleared by ABORT
 
   // =================================================================
   // CSR file
@@ -273,7 +279,10 @@ module dma_engine_core
 
           E_FETCH_WAIT: begin
             if (f_valid) begin
-              if (bad_owned) begin
+              if (host_err_latched) begin
+                // the descriptor fetch read itself failed -> contents unreliable
+                err_code <= ERR_HOST_BUS[7:0]; estate <= E_ERROR;
+              end else if (bad_owned) begin
                 err_code <= ERR_DESC_INV[7:0]; estate <= E_ERROR;
               end else if (bad_len) begin
                 err_code <= ERR_BAD_LEN[7:0];  estate <= E_ERROR;
@@ -290,7 +299,10 @@ module dma_engine_core
 
           E_RUN: begin
             if (m_done) begin
-              if (sys_err_latched) begin
+              if (host_err_latched) begin
+                err_code <= ERR_HOST_BUS[7:0];       // HOST/PCIe bus error during the move
+                estate   <= E_ERROR;
+              end else if (sys_err_latched) begin
                 err_code <= ERR_SYS_BUS[7:0];        // SYS bus error during the move
                 estate   <= E_ERROR;
               end else begin
@@ -329,6 +341,18 @@ module dma_engine_core
     if (!rst_n)               sys_err_latched <= 1'b0;
     else if (clr || m_start)  sys_err_latched <= 1'b0;
     else if (sys_bus_err)     sys_err_latched <= 1'b1;
+  end
+
+  // latch a HOST/PCIe read-completion error. The HOST port is shared by the
+  // descriptor fetch and the data move, so this is re-armed at the start of each
+  // fetch (f_start) and each move (m_start) and cleared by abort (clr); a non-OK
+  // response on any host read beat sets it sticky until the owning phase checks
+  // it (E_FETCH_WAIT / E_RUN) or ABORT clears it.
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)                          host_err_latched <= 1'b0;
+    else if (clr || f_start || m_start)  host_err_latched <= 1'b0;
+    else if (host_readdatavalid && (host_response != HRESP_OKAY))
+                                         host_err_latched <= 1'b1;
   end
 
 endmodule

@@ -56,6 +56,17 @@ beats are accepted (each when `!waitrequest`); the burst ends after the Nth.
 that the burst never crosses a 4 KiB boundary. Therefore adapters never need to
 split a burst for AXI 4 KiB or AHB 1 KiB rules.
 
+**Optional HOST read-completion status (`response[1:0]`).** The HOST (PCIe) GMM
+port additionally carries an *optional* per-beat completion response, accompanying
+each `readdatavalid` beat, mapping the PCIe Hard IP TXS status onto the standard
+Avalon-MM `response` encoding (`00`=OKAY; any other code = error: SLVERR/UR/CA or
+poisoned TLP). A non-OK code on any HOST read beat is captured by the core as
+`STATUS.ERROR = HOST_BUS` and surfaced on the top-level `host_bus_error` output
+(see `docs/register_map.md`). The signal is `S→M`, width 2; slaves that cannot
+error (e.g. the SYS adapters, which surface errors via their native bus response)
+tie it to `00`. It is the only HOST-side error channel — the SYS port reports
+errors through its adapter's `err`/`clr` pair instead.
+
 ---
 
 ## 2. CSR slave interface (host BAR access)

@@ -18,7 +18,8 @@ module avalon_mem_model #(
   parameter int BCW        = 5,
   parameter int SIZE_WORDS = 1 << 16,
   parameter int STALL      = 0,        // 0 = never stall, else pseudo-random
-  parameter int SEED       = 16'hACE1
+  parameter int SEED       = 16'hACE1,
+  parameter int ERR_WORD   = -1        // word index that returns response=SLVERR (-1 = none)
 ) (
   input  logic           clk,
   input  logic           rst_n,
@@ -30,7 +31,8 @@ module avalon_mem_model #(
   input  logic [BCW-1:0] burstcount,
   output logic           waitrequest,
   output logic [DW-1:0]  readdata,
-  output logic           readdatavalid
+  output logic           readdatavalid,
+  output logic [1:0]     response        // per-beat read completion status (00=OKAY)
 );
 
   localparam int LSB    = $clog2(DW/8);
@@ -48,6 +50,7 @@ module avalon_mem_model #(
   logic [AW-1:0]  raddr;
   logic [DW-1:0]  rdata_q;
   logic           rdv_q;
+  logic [1:0]     resp_q;
 
   // write burst state
   logic           wactive;
@@ -57,6 +60,7 @@ module avalon_mem_model #(
   assign waitrequest   = stall || (rrem != 0);
   assign readdata      = rdata_q;
   assign readdatavalid = rdv_q;
+  assign response      = resp_q;
 
   function automatic [IXW-1:0] idx(input logic [AW-1:0] a);
     idx = a[LSB +: IXW];
@@ -69,17 +73,21 @@ module avalon_mem_model #(
       raddr   <= '0;
       rdata_q <= '0;
       rdv_q   <= 1'b0;
+      resp_q  <= 2'b00;
       wactive <= 1'b0;
       wrem    <= '0;
       waddr   <= '0;
     end else begin
-      lfsr  <= {lfsr[14:0], lfsr[15]^lfsr[13]^lfsr[12]^lfsr[10]};
-      rdv_q <= 1'b0;
+      lfsr   <= {lfsr[14:0], lfsr[15]^lfsr[13]^lfsr[12]^lfsr[10]};
+      rdv_q  <= 1'b0;
+      resp_q <= 2'b00;
 
       // ---- read data emission (back-to-back after acceptance) ----
       if (rrem != 0) begin
         rdv_q   <= 1'b1;
         rdata_q <= mem[idx(raddr)];
+        // fault-inject a non-OK completion on the configured word (SLVERR=2'b10)
+        resp_q  <= (ERR_WORD >= 0 && idx(raddr) == IXW'(ERR_WORD)) ? 2'b10 : 2'b00;
         raddr   <= raddr + STRIDE;
         rrem    <= rrem - 1'b1;
       end

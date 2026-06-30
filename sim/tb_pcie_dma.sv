@@ -37,6 +37,11 @@ module tb_pcie_dma;
   localparam int HAW = HADDR_W;
   localparam int SAW = SADDR_W;
 
+  // HOST fault-injection word: any host read of this address returns a non-OK
+  // PCIe completion (response=SLVERR), exercising the ERR_HOST_BUS path (test G/H).
+  localparam logic [63:0] HOST_ERR_ADDR = 64'h0000_4000;
+  localparam int          HOST_ERR_WORD = HOST_ERR_ADDR >> $clog2(DW/8);
+
   // ---- clock / reset ----
   logic clk = 0, rst_n = 0;
   always #5 clk = ~clk;            // 100 MHz
@@ -57,6 +62,7 @@ module tb_pcie_dma;
   logic           host_waitrequest;
   logic [DW-1:0]  host_readdata;
   logic           host_readdatavalid;
+  logic [1:0]     host_response;
 
   // ---- SYS Avalon-MM master ----
   logic [SAW-1:0] avm_address;
@@ -88,7 +94,7 @@ module tb_pcie_dma;
   logic           hwrite, hready, hresp;
   logic [DW-1:0]  hwdata, hrdata;
 
-  logic irq, sys_bus_error;
+  logic irq, sys_bus_error, host_bus_error;
 
   // =================================================================
   // DUT
@@ -99,7 +105,7 @@ module tb_pcie_dma;
     .csr_readdata, .csr_readdatavalid, .csr_waitrequest,
     .host_address, .host_read, .host_write, .host_writedata,
     .host_byteenable, .host_burstcount, .host_waitrequest,
-    .host_readdata, .host_readdatavalid,
+    .host_readdata, .host_readdatavalid, .host_response,
     .avm_address, .avm_read, .avm_write, .avm_writedata,
     .avm_byteenable, .avm_burstcount, .avm_waitrequest,
     .avm_readdata, .avm_readdatavalid,
@@ -111,19 +117,21 @@ module tb_pcie_dma;
     .axi_arcache, .axi_arprot, .axi_arvalid, .axi_arready,
     .axi_rid, .axi_rdata, .axi_rresp, .axi_rlast, .axi_rvalid, .axi_rready,
     .haddr, .hburst, .hsize, .htrans, .hwrite, .hwdata, .hrdata, .hready, .hresp,
-    .irq, .sys_bus_error
+    .irq, .sys_bus_error, .host_bus_error
   );
 
   // =================================================================
   // HOST memory (Avalon-MM slave)
   // =================================================================
-  avalon_mem_model #(.AW(HAW), .DW(DW), .BCW(BCW), .STALL(`ST), .SEED(16'hA1A1))
+  avalon_mem_model #(.AW(HAW), .DW(DW), .BCW(BCW), .STALL(`ST), .SEED(16'hA1A1),
+                     .ERR_WORD(HOST_ERR_WORD))
   host_mem (
     .clk, .rst_n,
     .address(host_address), .read(host_read), .write(host_write),
     .writedata(host_writedata), .byteenable(host_byteenable),
     .burstcount(host_burstcount), .waitrequest(host_waitrequest),
-    .readdata(host_readdata), .readdatavalid(host_readdatavalid)
+    .readdata(host_readdata), .readdatavalid(host_readdatavalid),
+    .response(host_response)
   );
 
   // =================================================================
@@ -157,7 +165,8 @@ module tb_pcie_dma;
     .address(avm_address), .read(avm_read), .write(avm_write),
     .writedata(avm_writedata), .byteenable(avm_byteenable),
     .burstcount(avm_burstcount), .waitrequest(avm_waitrequest),
-    .readdata(avm_readdata), .readdatavalid(avm_readdatavalid)
+    .readdata(avm_readdata), .readdatavalid(avm_readdatavalid),
+    .response(/* SYS slave has no fault injection */)
   );
 `endif
 
@@ -356,8 +365,37 @@ module tb_pcie_dma;
     if (sys_bus_error) begin $display("  ABORT did not clear sys_bus_error"); errors++; end
 `endif
 
+    // G) HOST bus error on an H2C data read (all SYS configs): an H2C whose host
+    //    SOURCE is the fault-injected word must raise STATUS.ERROR /
+    //    ERR_INFO==ERR_HOST_BUS, be visible at the top-level host_bus_error, and
+    //    ABORT must clear it. (Descriptor fetch is clean; the move read fails.)
+    write_desc(0, HOST_ERR_ADDR, SYS_DST, LEN0, (32'h1<<C_VALID));
+    launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
+    if (!st[ST_ERROR]) begin $display("  HOST bus error (H2C read) not reported"); errors++; end
+    csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_HOST_BUS H2C", ec, ERR_HOST_BUS);
+    if (!host_bus_error) begin $display("  host_bus_error not visible at top (H2C)"); errors++; end
+    abort_clear;
+    if (host_bus_error) begin $display("  ABORT did not clear host_bus_error (H2C)"); errors++; end
+
+    // H) HOST bus error on a descriptor FETCH read (covers the C2H path): point the
+    //    ring base AT the fault-injected word. The fetch read fails, so the engine
+    //    must report ERR_HOST_BUS even though the descriptor is marked valid
+    //    (fetch-error has priority over descriptor-content checks).
+    host_mem.mem[widx(HOST_ERR_ADDR)+0] = HOST_DST;            // host_addr
+    host_mem.mem[widx(HOST_ERR_ADDR)+1] = {32'b0, SYS_SRC};    // sys_addr
+    host_mem.mem[widx(HOST_ERR_ADDR)+2] =
+        {((32'h1<<C_VALID)|(32'h1<<C_DIR)|(32'h1<<C_LAST)), LEN1};
+    host_mem.mem[widx(HOST_ERR_ADDR)+3] = 64'b0;
+    launch_and_wait(HOST_ERR_ADDR[31:0], 32'd1, st);
+    if (!st[ST_ERROR]) begin $display("  HOST bus error (C2H fetch) not reported"); errors++; end
+    csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_HOST_BUS C2H", ec, ERR_HOST_BUS);
+    if (!host_bus_error) begin $display("  host_bus_error not visible at top (C2H)"); errors++; end
+    abort_clear;
+    if (host_bus_error) begin $display("  ABORT did not clear host_bus_error (C2H)"); errors++; end
+
     // ---- report ----
-    if (sys_bus_error) begin $display("  sys_bus_error asserted"); errors++; end
+    if (sys_bus_error)  begin $display("  sys_bus_error asserted");  errors++; end
+    if (host_bus_error) begin $display("  host_bus_error asserted"); errors++; end
     if (errors == 0) $display("=== PASS : all checks ok ===");
     else             $display("=== FAIL : %0d error(s) ===", errors);
     $finish;

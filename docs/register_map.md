@@ -55,6 +55,7 @@ IRQ_STATUS bits are set by hardware and cleared by writing 1 (RW1C).
 | 0x03 | DESC_INV   | Descriptor C_VALID bit was 0                   |
 | 0x04 | BAD_BASE   | DESC_BASE not DESC_BYTES (32-byte) aligned     |
 | 0x05 | SYS_BUS    | SYS bus (AXI4 SLVERR/DECERR, AHB HRESP) error during the transfer |
+| 0x06 | HOST_BUS   | HOST/PCIe completion error (UR/CA/poison: `host_response != OKAY`) during a descriptor fetch or transfer |
 
 `DESC_BASE_LO/HI` **must be 32-byte aligned** (a descriptor is 32 bytes); an
 unaligned base is rejected at GO with `BAD_BASE` before any fetch is issued.
@@ -64,11 +65,24 @@ On a `SYS_BUS` error the descriptor is reported as `STATUS.ERROR` (not DONE) wit
 adapter's bus error is sticky; issue `CTRL.ABORT` to clear it (and the
 `sys_bus_error` output) before restarting.
 
+A `HOST_BUS` error is the PCIe-side mirror of `SYS_BUS`: any HOST read beat that
+returns a non-OK completion status (`host_response[1:0] != 00`, i.e. Unsupported
+Request / Completer Abort / poisoned TLP) is captured. Because the HOST port
+serves both descriptor fetches and host-side data reads, a `HOST_BUS` error can
+arise during a fetch (the descriptor contents are then treated as unreliable and
+the read error takes priority over the descriptor-content checks) or during an
+H2C data read. The affected descriptor is reported as `STATUS.ERROR` (not DONE)
+with `ERR_INFO = HOST_BUS` and surfaced on the top-level `host_bus_error` output;
+issue `CTRL.ABORT` to clear it before restarting. (HOST *write* completion errors
+on C2H are out of scope; the simple Avalon-MM HOST profile carries no write
+response. A completion-timeout watchdog is likewise a documented follow-up.)
+
 ## CTRL.ABORT semantics
 
 `CTRL.ABORT` is a **hard datapath reset** for error recovery: it flushes the
 data FIFO, drops any in-flight HOST/SYS bus burst, clears the engine FSM and the
-sticky SYS bus error, and returns the engine to IDLE. A burst that was already
+sticky SYS *and* HOST bus errors (clearing both `sys_bus_error` and
+`host_bus_error`), and returns the engine to IDLE. A burst that was already
 in flight on the bus is abandoned (truncated) — ABORT is not a graceful drain.
 For an orderly stop, let the descriptor ring complete instead.
 
