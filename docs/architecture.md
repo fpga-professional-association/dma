@@ -109,3 +109,10 @@ GMM contract is designed to drop into such a bridge unchanged.
 * **Descriptor ring base** must be 32-byte (`DESC_BYTES`) aligned; enforced at GO
   (`ERR_BAD_BASE`). This also guarantees descriptor fetches never cross a 4 KiB
   PCIe boundary.
+* **Outstanding depth / latency.** Each direction is single-outstanding: a new
+  read (or write) burst leaves only after the previous one on that role has
+  fully drained, and the HOST arbiter holds its grant for a whole burst, so the
+  engine pays one bus round-trip per burst. A larger `MAX_BURST_BEATS`
+  (now 64 ⇒ 512 B/burst at `DATA_W=64`) and the per-bus 4 KiB/1 KiB boundary
+  amortise that cost; the latency analysis and a concrete path to *multiple*
+  outstanding bursts are written up in `docs/perf_outstanding.md`.

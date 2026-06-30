@@ -105,6 +105,15 @@ module pcie_dma_top
   logic               adapter_err, sys_clr_w;
   assign sys_bus_error = adapter_err;
 
+  // SYS-bus burst address boundary (log2 bytes): AHB-Lite requires 1 KiB,
+  // Avalon-MM / AXI4 tolerate 4 KiB. The data mover clamps every SYS-side burst
+  // to this boundary; the host/PCIe side always uses LOG2_BND_PCIE (4 KiB).
+  /* verilator lint_off WIDTHEXPAND */  // string-literal compares have differing widths
+  localparam int unsigned SYS_BND =
+      (SYS_IF == "AHB")  ? LOG2_BND_AHB  :
+      (SYS_IF == "AXI4") ? LOG2_BND_AXI4 : LOG2_BND_AVALON;
+  /* verilator lint_on WIDTHEXPAND */
+
   // -------- core SYS GMM master (driven into the selected adapter) --------
   logic [SADDR_W-1:0] sg_address;
   logic               sg_read, sg_write;
@@ -118,7 +127,7 @@ module pcie_dma_top
   // =================================================================
   // DMA core
   // =================================================================
-  dma_engine_core u_core (
+  dma_engine_core #(.LOG2_SYS_BOUNDARY(SYS_BND)) u_core (
     .clk(clk), .rst_n(rst_n),
     .csr_address(csr_address), .csr_read(csr_read), .csr_write(csr_write),
     .csr_writedata(csr_writedata), .csr_readdata(csr_readdata),

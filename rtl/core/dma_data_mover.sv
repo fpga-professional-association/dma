@@ -8,15 +8,21 @@
 //   H2C (dir=0): read HOST(host_addr) -> FIFO -> write SYS(sys_addr)
 //   C2H (dir=1): read SYS(sys_addr)   -> FIFO -> write HOST(host_addr)
 //
-// Bursts are sized so they never exceed MAX_BURST_BEATS and never cross a 1 KiB
-// boundary (the tightest, AHB), keeping every bus adapter trivially compliant.
+// Bursts are sized so they never exceed MAX_BURST_BEATS and never cross the
+// per-bus address boundary (4 KiB PCIe/Avalon/AXI, 1 KiB AHB; selected per
+// transfer direction), keeping every bus adapter trivially compliant.
 // The read engine reserves FIFO space before issuing, so reads never overflow;
 // the write engine only drains beats that are present, so writes never underrun.
 //============================================================================
 
 module dma_data_mover
   import dma_pkg::*;
-(
+#(
+  // log2(bytes) of the system-bus burst boundary. Defaults to the AHB-tightest
+  // 1 KiB; pcie_dma_top raises it to 4 KiB for Avalon/AXI. The host/PCIe side
+  // always uses LOG2_BND_PCIE (4 KiB).
+  parameter int unsigned LOG2_SYS_BOUNDARY = LOG2_BND_AHB
+)(
   input  logic               clk,
   input  logic               rst_n,
   input  logic               clr,            // abort/soft-clear
@@ -57,6 +63,7 @@ module dma_data_mover
   localparam int unsigned LBE   = $clog2(BE_W);          // log2(bytes per beat)
   localparam int unsigned DEPTH = FIFO_DEPTH;
   localparam int unsigned LVLW  = $clog2(DEPTH) + 1;
+  localparam int unsigned LOG2_HOST_BOUNDARY = LOG2_BND_PCIE;  // host/PCIe side: 4 KiB
 
   // ---------------- latched command ----------------
   logic                running, dir_q;
@@ -100,15 +107,25 @@ module dma_data_mover
   logic               w_waitrequest;
 
   // ---------------- burst sizing helpers ----------------
-  // beats remaining until the next 1 KiB boundary from `a`
+  // beats remaining until the next 2**lbnd-byte boundary from `a`
   // (uses shifts/casts, no in-process constant part-selects, for tool portability)
-  function automatic [LEN_W-1:0] beats_to_boundary(input logic [HADDR_W-1:0] a);
+  function automatic [LEN_W-1:0] beats_to_boundary(input logic [HADDR_W-1:0] a,
+                                                   input int unsigned       lbnd);
     logic [HADDR_W-1:0] a_lo;
     logic [LEN_W-1:0]   bytes_to_b;
-    a_lo       = a - ((a >> 10) << 10);          // a mod 1024
-    bytes_to_b = 32'd1024 - LEN_W'(a_lo);        // 1 .. 1024
+    a_lo       = a - ((a >> lbnd) << lbnd);          // a mod 2**lbnd
+    bytes_to_b = (LEN_W'(1) << lbnd) - LEN_W'(a_lo); // 1 .. 2**lbnd
     beats_to_boundary = bytes_to_b >> LBE;
   endfunction
+
+  // per-direction boundary: the read role drives the read source port and the
+  // write role drives the write destination port. H2C reads HOST/writes SYS;
+  // C2H reads SYS/writes HOST.  (LOG2_*_BOUNDARY are log2 bytes.)
+  int unsigned r_lbnd, w_lbnd;
+  always_comb begin
+    r_lbnd = (dir_q == DIR_H2C) ? LOG2_HOST_BOUNDARY : LOG2_SYS_BOUNDARY;
+    w_lbnd = (dir_q == DIR_H2C) ? LOG2_SYS_BOUNDARY  : LOG2_HOST_BOUNDARY;
+  end
 
   function automatic [LEN_W-1:0] min3(input logic [LEN_W-1:0] x,
                                       input logic [LEN_W-1:0] y,
@@ -124,7 +141,7 @@ module dma_data_mover
   logic             r_can_issue;
   always_comb begin
     r_space     = LEN_W'(DEPTH) - LEN_W'(fifo_level);
-    r_cand      = min3(LEN_W'(MAX_BURST_BEATS), r_rem, beats_to_boundary(r_addr));
+    r_cand      = min3(LEN_W'(MAX_BURST_BEATS), r_rem, beats_to_boundary(r_addr, r_lbnd));
     if (r_space < r_cand) r_cand = r_space;
     r_can_issue = (rstate == R_IDLE) && (r_rem != 0) && (r_cand != 0);
   end
@@ -134,7 +151,7 @@ module dma_data_mover
   logic             read_complete, w_can_issue;
   always_comb begin
     w_avail       = LEN_W'(fifo_level);
-    w_bmax        = min3(LEN_W'(MAX_BURST_BEATS), w_rem, beats_to_boundary(w_addr));
+    w_bmax        = min3(LEN_W'(MAX_BURST_BEATS), w_rem, beats_to_boundary(w_addr, w_lbnd));
     read_complete = (r_rem == 0) && (rstate == R_IDLE);
     w_cand        = (w_avail < w_bmax) ? w_avail : w_bmax;
     w_can_issue   = (wstate == W_IDLE) && (w_rem != 0) && (w_cand != 0) &&

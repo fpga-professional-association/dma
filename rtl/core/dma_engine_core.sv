@@ -12,7 +12,10 @@
 
 module dma_engine_core
   import dma_pkg::*;
-(
+#(
+  // log2(bytes) of the SYS-bus burst boundary (set per SYS_IF by pcie_dma_top).
+  parameter int unsigned LOG2_SYS_BOUNDARY = LOG2_BND_AHB
+)(
   input  logic                  clk,
   input  logic                  rst_n,
 
@@ -143,7 +146,7 @@ module dma_engine_core
   // =================================================================
   // Data mover
   // =================================================================
-  dma_data_mover u_mover (
+  dma_data_mover #(.LOG2_SYS_BOUNDARY(LOG2_SYS_BOUNDARY)) u_mover (
     .clk(clk), .rst_n(rst_n), .clr(clr),
     .start(m_start), .host_addr(m_host_addr), .sys_addr(m_sys_addr),
     .length(m_length), .dir(m_dir),

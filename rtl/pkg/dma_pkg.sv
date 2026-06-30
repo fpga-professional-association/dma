@@ -35,10 +35,27 @@ package dma_pkg;
   //--------------------------------------------------------------------------
   // Burst limits
   //--------------------------------------------------------------------------
-  // MAX_BURST_BEATS chosen so that MAX_BURST_BEATS*BE_W <= 1 KiB, guaranteeing
-  // no burst ever crosses a 1 KiB (AHB) or 4 KiB (PCIe/AXI) boundary.
-  parameter int unsigned MAX_BURST_BEATS = 16;
+  // MAX_BURST_BEATS is the largest beat count the data mover will pack into one
+  // bus command. Larger bursts amortise the per-command bus round-trip, raising
+  // sustained beats/cycle on a deep-latency link (see docs/perf_outstanding.md).
+  // It is freely parameterisable; the only hard upper bound is BCW <= 8 (i.e.
+  // MAX_BURST_BEATS <= 128) so that the AXI4 adapter's 8-bit AxLEN encoding
+  // (AxLEN = burstcount-1, <= 255) and its zero-extension stay legal. The data
+  // mover additionally clamps every burst to the per-bus address boundary below,
+  // so no burst ever crosses a 4 KiB (PCIe/Avalon/AXI) or 1 KiB (AHB) boundary
+  // regardless of this value.
+  parameter int unsigned MAX_BURST_BEATS = 64;              // 512 B/burst at DATA_W=64
   parameter int unsigned BCW = $clog2(MAX_BURST_BEATS) + 1;  // burstcount field width (1..MAX)
+
+  // Per-bus burst address-boundary, expressed as log2(bytes). A burst must never
+  // cross this boundary on the bus it targets. The PCIe/host side and the
+  // Avalon/AXI system buses tolerate 4 KiB; AHB-Lite requires 1 KiB. The data
+  // mover selects the boundary per transfer direction (host vs system port) so
+  // the 1 KiB AHB limit is no longer applied to Avalon/AXI configs.
+  parameter int unsigned LOG2_BND_PCIE   = 12;  // 4 KiB  (host / PCIe side)
+  parameter int unsigned LOG2_BND_AVALON = 12;  // 4 KiB
+  parameter int unsigned LOG2_BND_AXI4   = 12;  // 4 KiB
+  parameter int unsigned LOG2_BND_AHB    = 10;  // 1 KiB
 
   //--------------------------------------------------------------------------
   // Transfer length

@@ -25,8 +25,10 @@ elaboration: **Avalon-MM**, **AXI4**, or **AHB-Lite**.
 * Descriptor-ring scatter-gather (32-byte descriptors in host memory).
 * Bidirectional: **H2C** (host→system) and **C2H** (system→host), per descriptor.
 * Burst data mover with an elastic FIFO; bursts are bounded so they never exceed
-  `MAX_BURST_BEATS` or cross a 1 KiB / 4 KiB boundary — every adapter stays
-  trivially protocol-legal.
+  `MAX_BURST_BEATS` (default 64 ⇒ 512 B/burst) or cross the per-bus address
+  boundary (4 KiB PCIe/Avalon/AXI, 1 KiB AHB) — every adapter stays trivially
+  protocol-legal. Outstanding-depth/latency tuning: see
+  [`docs/perf_outstanding.md`](docs/perf_outstanding.md).
 * Host-side register file (BAR): control, status, descriptor ring base/count,
   per-descriptor and ring-completion interrupts, error reporting.
 * One internal "GMM" master profile (Avalon-MM pipelined) → the core is verified

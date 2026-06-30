@@ -51,10 +51,13 @@ which the core guarantees by reserving FIFO space before issuing the command.
 held stable for the entire burst (slave auto-increments internally). Exactly `N`
 beats are accepted (each when `!waitrequest`); the burst ends after the Nth.
 
-**Boundary guarantee.** The data mover constrains every burst so that
-`MAX_BURST_BEATS * (DATA_W/8) <= 1 KiB` and the start address is aligned such
-that the burst never crosses a 4 KiB boundary. Therefore adapters never need to
-split a burst for AXI 4 KiB or AHB 1 KiB rules.
+**Boundary guarantee.** The data mover clamps every burst to `MAX_BURST_BEATS`
+*and* to the per-bus address boundary, chosen by transfer direction: 4 KiB on the
+PCIe/host port and on the Avalon/AXI system buses, 1 KiB on AHB-Lite
+(`LOG2_BND_*` in `dma_pkg`). So no burst ever crosses its target bus's boundary
+and adapters never need to split a burst for AXI 4 KiB or AHB 1 KiB rules. (The
+previous build applied the AHB-tightest 1 KiB to every config; the boundary is
+now per-`SYS_IF`.)
 
 ---
 
