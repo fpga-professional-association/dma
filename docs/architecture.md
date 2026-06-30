@@ -90,6 +90,10 @@ case where the user system bus and the PCIe Hard IP application clock are the
 same `coreclkout_hip`. If the SYS bus runs on a different clock, instantiate the
 `gmm_to_*` adapter behind a dual-clock Avalon-MM/AXI clock-crossing bridge; the
 GMM contract is designed to drop into such a bridge unchanged.
+`quartus/pcie_dma_integration.sdc` provides the matching constraint template
+(single-clock and the asynchronous separate-SYS-clock case), and
+`quartus/pcie_dma_hw.tcl` packages the core as a Platform Designer component for
+this flow (see `quartus/example/`).
 
 ## Integration notes / known limitations
 
