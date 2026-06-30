@@ -24,11 +24,16 @@ declare -A RTL=(
   [fv_axi4]="rtl/adapters/gmm_to_axi4.sv"
   [fv_ahb]="rtl/adapters/gmm_to_ahb.sv"
   [fv_ahb_abort]="rtl/adapters/gmm_to_ahb.sv"   # issue #11: ERROR burst-cancel
+  # --- issue #6: harnesses for previously sim-only / unproven blocks ---
+  [fv_avalon]="rtl/adapters/gmm_to_avalon.sv"
+  [fv_data_mover]="rtl/core/dma_fifo.sv rtl/core/dma_data_mover.sv"
+  [fv_descriptor_fetch]="rtl/core/dma_descriptor_fetch.sv"
 )
 
 fail=0
-for top in fv_fifo fv_arbiter fv_axi4 fv_ahb fv_ahb_abort; do
-  printf "%-12s : " "$top"
+for top in fv_fifo fv_arbiter fv_axi4 fv_ahb fv_ahb_abort \
+           fv_avalon fv_data_mover fv_descriptor_fetch; do
+  printf "%-20s : " "$top"
   out=$(yosys -p "read_verilog -sv -formal -Irtl/pkg $PKG ${RTL[$top]} formal/${top}.sv; \
                   prep -top $top; flatten; memory_map; async2sync; opt -fast; \
                   sat -seq $DEPTH -prove-asserts -set-assumes -set-init-zero" 2>&1)

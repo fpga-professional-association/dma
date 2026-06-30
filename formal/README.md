@@ -12,6 +12,9 @@ SMT solver**, and also work under SymbiYosys with a solver for unbounded proofs.
 | `fv_axi4.sv`     | `gmm_to_axi4`      | **AXI4 handshake stability** (VALID held with stable payload until READY), INCR/ARSIZE/AWSIZE, AWLEN/ARLEN, WLAST placement, AW/AR exclusivity |
 | `fv_ahb.sv`      | `gmm_to_ahb`       | **AHB-Lite legality**: no BUSY, INCR, control held across wait states, NONSEQ→SEQ sequencing, address increment; models a spec-legal **two-cycle `HRESP=ERROR`** response and proves the sticky `err` flag is raised (drain mode, `EARLY_ABORT=0`) |
 | `fv_ahb_abort.sv`| `gmm_to_ahb` (`EARLY_ABORT=1`) | **AHB-Lite ERROR burst-cancel**: across the modelled two-cycle ERROR the pending transfer is dropped to `HTRANS=IDLE`, control only changes to IDLE on the ERROR (else held), and the sticky `err` flag is still raised |
+| `fv_data_mover.sv` | `dma_data_mover` | **burst boundary soundness**: every issued read/write command has `burstcount ∈ [1, MAX_BURST_BEATS]` and its byte window stays inside the aligned 1 KiB page (never crosses a 1 KiB/4 KiB boundary); per-port read/write exclusivity; full byteenable. Closes the package-level "no burst crosses a boundary" contract every adapter proof relies on |
+| `fv_avalon.sv`   | `gmm_to_avalon`    | **passthrough equivalence**: every Avalon-MM master output equals its GMM source, every GMM response equals its Avalon source, and `err == 0` (verified baseline for the default-SYS adapter) |
+| `fv_descriptor_fetch.sv` | `dma_descriptor_fetch` | **ring addressing**: read command targets `base + index*DESC_BYTES`, burst is exactly `DESC_BEATS` with full byteenable, master is read-only, command held stable across wait states, `valid` is a single-cycle pulse |
 
 Each harness instantiates the DUT with **free** stimulus, constrains the
 environment with `assume` (a well-behaved GMM master: read/write exclusive,
@@ -22,7 +25,7 @@ environment with `assume` (a well-behaved GMM master: read/write exclusive,
 ## Run locally (no solver needed)
 
 ```
-./scripts/run_formal.sh            # bmc depth 22 on all five targets
+./scripts/run_formal.sh            # bmc depth 22 on all targets
 ./scripts/run_formal.sh 40         # deeper bound
 ```
 
@@ -49,6 +52,9 @@ sby -f formal/axi4.sby
 sby -f formal/ahb.sby
 sby -f formal/ahb_abort.sby
 sby -f formal/arbiter.sby
+sby -f formal/avalon.sby
+sby -f formal/data_mover.sby
+sby -f formal/descriptor_fetch.sby
 ```
 
 The `.sby` files default to `smtbmc z3`; switch the `[engines]` line to
@@ -59,7 +65,21 @@ The `.sby` files default to `smtbmc z3`; switch the `[engines]` line to
 * Proofs run at small data/address widths (`DW=16, AW=8`) — protocol compliance
   is width-independent, and small widths keep BMC fast. Override with `chparam`
   or the harness parameters to re-prove at the deployment widths.
-* The data-mover and CSR FSMs are exercised by the cycle-accurate self-checking
-  simulation (`sim/`, all three bus options, with and without back-pressure),
-  which is the primary functional proof; the formal layer pins down the FIFO and
-  the three bus protocols where hand proofs are hardest.
+* The data-mover **burst-boundary** invariant, the **Avalon** passthrough and the
+  **descriptor-fetch** addressing are now formally proven (issue #6), closing the
+  package-level "no burst crosses a 1 KiB/4 KiB boundary" soundness gap that every
+  adapter proof had previously only *assumed*.
+* The new harnesses state their properties on the DUT **ports** only: the
+  open-source yosys Verilog front-end does not resolve hierarchical references
+  into a submodule instance (`dut.<internal>` is silently treated as a fresh
+  free wire), so internal-signal assertions would be vacuous. The bus command
+  (address/burstcount) and the control outputs are exactly the protocol-critical
+  observables. `dma_data_mover` and `dma_descriptor_fetch` reference the package
+  by explicit `dma_pkg::` scope (like the adapters) instead of `import dma_pkg::*`
+  so the portable front-end can parse them; behaviour is unchanged.
+* Still **simulation-only** (follow-up): the CSR RW1C/pulse logic (its headline
+  set-wins-over-clear property lives in an internal register that the port-only
+  style cannot observe) and the descriptor-ring walk FSM in `dma_engine_core`
+  (which `import`s the package and is too large for tractable portable BMC). These
+  remain exercised by the cycle-accurate self-checking simulation (`sim/`, all
+  three bus options, with and without back-pressure), the primary functional proof.
