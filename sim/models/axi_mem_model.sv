@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // axi_mem_model.sv -- AXI4 slave with backing memory (sim only)
 //

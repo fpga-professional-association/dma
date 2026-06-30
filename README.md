@@ -99,6 +99,18 @@ fit it standalone (the included `virtual_pins.tcl` makes the bus ports virtual).
 Simulation in Questa-Intel / ModelSim-Intel: compile `rtl/` + `sim/` and run
 `tb_pcie_dma` with `+define+USE_AXI` / `+define+USE_AHB` / `+define+STALLS`.
 
+## License
+
+Licensed under the **Apache License, Version 2.0** — see the [`LICENSE`](LICENSE)
+file for the full text. Apache-2.0 is a permissive license with an explicit
+patent grant, making it well suited to redistributable HDL IP. Every
+synthesizable source carries an `// SPDX-License-Identifier: Apache-2.0` header
+for per-file provenance.
+
+```
+Copyright 2026 fpga-professional-association
+```
+
 ## Programming model
 
 See `docs/register_map.md` and `docs/descriptor_format.md`. In short:

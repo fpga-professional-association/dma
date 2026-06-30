@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // gmm_to_ahb.sv -- GMM (Avalon-MM pipelined) -> AHB-Lite master
 //

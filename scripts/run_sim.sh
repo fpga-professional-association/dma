@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #============================================================================
 # run_sim.sh -- compile + run the self-checking testbench for every system-bus
 # option, with and without bus back-pressure (Icarus Verilog).

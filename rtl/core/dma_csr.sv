@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // dma_csr.sv -- Host-facing control/status register file
 //

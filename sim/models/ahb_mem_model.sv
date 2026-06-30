@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // ahb_mem_model.sv -- AHB-Lite slave with backing memory (sim only)
 //

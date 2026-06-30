@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // fv_fifo.sv -- Formal properties for dma_fifo
 //

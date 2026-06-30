@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // dma_arbiter.sv -- 2:1 GMM master arbiter (round-robin, burst-atomic)
 //

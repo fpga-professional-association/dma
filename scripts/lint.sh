@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #============================================================================
 # lint.sh -- Verilator -Wall lint of the synthesizable RTL, for each system-bus
 # configuration. A clean run prints nothing per config and exits 0.

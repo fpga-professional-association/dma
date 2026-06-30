@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // fv_axi4.sv -- Formal AXI4-compliance properties for gmm_to_axi4
 //
