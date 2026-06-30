@@ -187,6 +187,15 @@ See `docs/register_map.md` and `docs/descriptor_format.md`. In short:
   and (AHB) **SYS bus-error reporting**. With AXI back-pressure the slave model gates
   `AWREADY` on `WVALID`, exercising the adapter's concurrent AW/W presentation.
   Passes for Avalon/AXI4/AHB with and without pseudo-random slave back-pressure.
+  On top of the directed cases it runs a **constrained-random tier** (`$urandom`,
+  seeded by `+SEED`): long descriptor rings (depth 32–48) with randomized
+  direction/length/offset/`C_IRQ`, golden-reference scoring of every transfer,
+  `REG_DESC_INDEX` read-back, count-based *and* `C_LAST` ring termination, the
+  error-IRQ path, and manual functional-coverage tallies. The stimulus is
+  deterministic per seed and identical across all bus configs; `run_sim.sh`
+  sweeps `SIM_SEEDS` (default `1 2 3`) and exits non-zero on any failure. Optional
+  covergroup/SVA-`bind` work needs a non-Icarus simulator — see
+  `docs/architecture.md`.
 * **Formal** — bounded proofs (BMC depth 22, yosys SAT) of FIFO ordering/data
   integrity & safety, arbiter mutual exclusion, AXI4 handshake/burst compliance,
   and AHB-Lite legality. See `formal/README.md`.

@@ -190,3 +190,25 @@ writes completion/error status back into the host ring and never clears
 `C_VALID`. Software observes completion exclusively through the global `STATUS`
 register, the `REG_DESC_INDEX` completed-descriptor count, and the optional
 per-descriptor `C_IRQ` interrupt.
+
+## Verification: portable vs. optional tier (issue #3)
+
+`sim/tb_pcie_dma.sv` runs two stimulus tiers. The **portable tier** runs under
+the existing Icarus CI: the directed scenarios *plus* a constrained-random
+descriptor-ring generator built on `$urandom`/`$urandom_range`. It produces long
+rings (randomized depth 32–48), with per-descriptor randomized direction, legal
+aligned length/offset (including 1 KiB-boundary crossers and exact max bursts),
+and `C_IRQ`; it scores every transfer against a golden reference, reads back
+`REG_DESC_INDEX`, exercises both count-based and `C_LAST` ring termination, and
+keeps manual functional-coverage tallies (Icarus has no covergroups). The RNG is
+seeded once from `+SEED=<n>` (fixed default), and the generated geometry is
+independent of the selected SYS bus, so the run is deterministic and identical
+across all six `run_sim.sh` configurations; `run_sim.sh` sweeps a small fixed set
+of seeds (`SIM_SEEDS`, default `1 2 3`) and now exits non-zero on any failure.
+
+The **optional tier** needs a coverage/SVA-capable simulator (Questa/VCS/Xcelium,
+or Verilator with limited SVA) and is tracked as follow-up: SystemVerilog
+covergroups, and factoring the `formal/fv_*` protocol checks into standalone
+monitor modules `bind`-ed onto the DUT so the same assertions run on every
+simulation trace. These are deliberately *not* wired into the Icarus CI job,
+which cannot elaborate covergroups or concurrent SVA.

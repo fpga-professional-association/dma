@@ -249,9 +249,10 @@ module tb_pcie_dma;
     csr_wr(REG_DESC_BASE_LO[7:0], base);
     csr_wr(REG_DESC_BASE_HI[7:0], 32'd0);
     csr_wr(REG_DESC_COUNT[7:0],   count);
-    csr_wr(REG_CTRL[7:0], (32'h1<<CTRL_GO));
+    csr_wr(REG_IRQ_ENABLE[7:0],   32'h3);                          // enable DONE+ERROR irq sources
+    csr_wr(REG_CTRL[7:0], (32'h1<<CTRL_GO)|(32'h1<<CTRL_IRQ_EN));  // GO + global IRQ enable
     status = 0; k = 0;
-    while ((k < 20000) && (status[ST_DONE] !== 1'b1) && (status[ST_ERROR] !== 1'b1)) begin
+    while ((k < 40000) && (status[ST_DONE] !== 1'b1) && (status[ST_ERROR] !== 1'b1)) begin
       csr_rd(REG_STATUS[7:0], status); k++;
     end
   endtask
@@ -262,10 +263,210 @@ module tb_pcie_dma;
   endtask
 
   // =================================================================
+  // Constrained-random descriptor-ring tier (issue #3, portable/Icarus)
+  //
+  // Procedural $urandom stimulus + golden-reference scoring + manual
+  // coverage bookkeeping. Fully deterministic: the global RNG is seeded
+  // once from +SEED=<n> (fixed default), and the geometry drawn here is
+  // independent of the selected SYS bus, so all 6 run_sim.sh configs
+  // produce the identical ring and PASS every run.
+  //
+  // Each descriptor owns one host slot AND one sys slot (R_SLOT bytes,
+  // disjoint per index), so direction/length/offset can be randomized
+  // freely without any cross-descriptor aliasing. All SYS addresses are
+  // kept >= 0x1000 so they never touch the AHB fault-injection word
+  // (byte 0x800) used by directed test F.
+  // =================================================================
+  localparam int RING_MAX = 48;                 // max descriptors per random ring
+  localparam int R_SLOT   = 4096;               // per-descriptor host & sys slot (bytes)
+  localparam int R_DMIN   = 32;                  // min random ring depth
+  localparam int R_DMAX   = RING_MAX;            // max random ring depth (>=32: "long ring")
+  localparam int R_LMAX   = 1024;               // max random transfer length (bytes)
+  localparam int R_BUDGET = 4000;               // per-ring beat budget (bounds runtime)
+  localparam logic [63:0] RND_DESC_BASE = 64'h0000_8000; // host ring base (32B aligned)
+  localparam logic [63:0] RND_HBUF      = 64'h0001_0000; // host data-slot region base
+  localparam logic [31:0] RND_SBUF      = 32'h0000_1000; // sys  data-slot region base (> AHB err word)
+
+  // per-descriptor geometry, kept for golden checking
+  int rdir  [0:RING_MAX-1];   // 0 = H2C, 1 = C2H
+  int rlen  [0:RING_MAX-1];   // bytes
+  int rhoff [0:RING_MAX-1];   // host-slot byte offset
+  int rsoff [0:RING_MAX-1];   // sys-slot  byte offset
+  int rirq  [0:RING_MAX-1];   // C_IRQ
+
+  // functional-coverage bookkeeping (manual; Icarus has no covergroups)
+  int cov_rings, cov_descs, cov_h2c, cov_c2h, cov_single, cov_maxburst;
+  int cov_cross, cov_irq, cov_count_term, cov_last_early, cov_last_final, cov_idx_partial;
+
+  // self-describing payload: unique per (ring,desc), increments per beat
+  function automatic logic [63:0] patword(input int ring, input int d, input int k);
+    patword = {32'(32'h5A00_0000 + ring*32'h1000 + d), 32'(k)};
+  endfunction
+
+  // does [off, off+len) cross a 1 KiB boundary (the data mover's burst-split granularity)?
+  function automatic int crosses1k(input int off, input int len);
+    crosses1k = ((off/1024) != ((off+len-1)/1024)) ? 1 : 0;
+  endfunction
+
+  // aligned random byte length in [8, R_LMAX]; weighted toward short transfers
+  function automatic int rand_len();
+    int pick, b, bmax;
+    bmax = R_LMAX/8;                                  // 128 beats
+    pick = $urandom_range(0, 9);
+    if      (pick < 6) b = $urandom_range(1, 8);      // ~60% : 1..8 beats
+    else if (pick < 9) b = $urandom_range(9, 64);     // ~30% : up to 512 B
+    else               b = $urandom_range(65, bmax);  // ~10% : up to R_LMAX (boundary crossers)
+    if (b < 1)    b = 1;
+    if (b > bmax) b = bmax;
+    rand_len = b*8;
+  endfunction
+
+  // aligned random byte offset keeping [off, off+len) inside the slot
+  function automatic int rand_off(input int len);
+    rand_off = 8 * $urandom_range(0, (R_SLOT - len)/8);
+  endfunction
+
+  // write a 32-byte descriptor into a ring at an arbitrary host base
+  task automatic write_desc_base(input logic [63:0] dbase, input int i,
+                                 input logic [63:0] host, input logic [31:0] sys,
+                                 input logic [31:0] len, input logic [31:0] ctrl);
+    int b = widx(dbase) + i*(DESC_BYTES/(DW/8));
+    host_mem.mem[b+0] = host;
+    host_mem.mem[b+1] = {32'b0, sys};
+    host_mem.mem[b+2] = {ctrl, len};
+    host_mem.mem[b+3] = 64'b0;
+  endtask
+
+  // after an injected error: assert the error IRQ pin + IRQ_STATUS[ERROR], then W1C-clear
+  task automatic check_err_irq(input string what);
+    logic [31:0] isr;
+    if (irq !== 1'b1) begin $display("  [%s] error IRQ not asserted", what); errors++; end
+    csr_rd(REG_IRQ_STATUS[7:0], isr);
+    if (!isr[IRQ_ERROR]) begin $display("  [%s] IRQ_STATUS.ERROR not set", what); errors++; end
+    csr_wr(REG_IRQ_STATUS[7:0], 32'h3);          // W1C both bits
+    @(posedge clk);
+    if (irq !== 1'b0) begin $display("  [%s] error IRQ not cleared by W1C", what); errors++; end
+  endtask
+
+  // build, launch and fully score one constrained-random ring.
+  //   mode 0 : no C_LAST anywhere -> count-based termination (core line ~287)
+  //   mode 1 : C_LAST at a middle index -> early cur_last termination (partial DESC_INDEX)
+  //   mode 2 : C_LAST at the final index -> cur_last == count termination
+  task automatic gen_and_run_ring(input int ring, input int mode);
+    int D, L, consumed, total_beats, i, k;
+    logic [31:0] st_l, idxv, irqs, ctrl;
+    logic [63:0] hbyte;
+    logic [31:0] sbyte;
+
+    D = $urandom_range(R_DMIN, R_DMAX);
+    if      (mode == 0) L = -1;                      // count termination
+    else if (mode == 1) L = $urandom_range(1, D-2);  // early last (1 <= L <= D-2)
+    else                L = D-1;                      // final last
+    consumed = (L < 0) ? D : (L+1);
+
+    total_beats = 0;
+    for (i = 0; i < D; i++) begin
+      rdir[i] = $urandom_range(0, 1);
+      rirq[i] = $urandom_range(0, 1);
+      rlen[i] = rand_len();
+      if (total_beats + rlen[i]/8 > R_BUDGET) rlen[i] = 8;   // runtime cap (rarely hit)
+      rhoff[i] = rand_off(rlen[i]);
+      rsoff[i] = rand_off(rlen[i]);
+      // guaranteed coverage points in the count-terminated ring
+      if (mode == 0 && i == 0) begin rdir[i]=0; rlen[i]=256; rhoff[i]=896;  rsoff[i]=1920; rirq[i]=1; end // boundary crosser
+      if (mode == 0 && i == 1) begin rdir[i]=1; rlen[i]=128; rhoff[i]=0;    rsoff[i]=1024;            end // exact max burst
+      if (mode == 0 && i == 2) begin rdir[i]=0; rlen[i]=8;   rhoff[i]=0;    rsoff[i]=0;               end // single beat
+      total_beats += rlen[i]/8;
+
+      hbyte = RND_HBUF + i*R_SLOT + rhoff[i];
+      sbyte = RND_SBUF + i*R_SLOT + rsoff[i];
+      ctrl  = (32'h1 << C_VALID)
+            | (rdir[i] ? (32'h1 << C_DIR)  : 32'h0)
+            | (rirq[i] ? (32'h1 << C_IRQ)  : 32'h0)
+            | ((i == L) ? (32'h1 << C_LAST) : 32'h0);
+      write_desc_base(RND_DESC_BASE, i, hbyte, sbyte, rlen[i], ctrl);
+
+      // preload source, poison destination for descriptors that will be consumed
+      if (i < consumed) begin
+        for (k = 0; k < rlen[i]/8; k++) begin
+          if (rdir[i] == 0) begin                       // H2C : src=host, dst=sys
+            host_mem.mem[widx(hbyte)+k]          = patword(ring, i, k);
+            sys_mem.mem[widx({32'b0,sbyte})+k]   = 64'hDEAD_DEAD_BEEF_BEEF;
+          end else begin                                // C2H : src=sys,  dst=host
+            sys_mem.mem[widx({32'b0,sbyte})+k]   = patword(ring, i, k);
+            host_mem.mem[widx(hbyte)+k]          = 64'hDEAD_DEAD_BEEF_BEEF;
+          end
+        end
+      end
+    end
+
+    csr_wr(REG_IRQ_STATUS[7:0], 32'h3);                 // clear any pending irq
+    launch_and_wait(RND_DESC_BASE[31:0], D, st_l);
+
+    if (st_l[ST_ERROR]) begin $display("  [rnd r%0d] unexpected ERROR STATUS=%h", ring, st_l); errors++; end
+    if (!st_l[ST_DONE]) begin $display("  [rnd r%0d] no DONE (timeout)", ring);                 errors++; end
+
+    // completed-descriptor count read-back
+    csr_rd(REG_DESC_INDEX[7:0], idxv);
+    check($sformatf("rnd r%0d DESC_INDEX", ring), idxv, consumed);
+
+    // ring-completion IRQ path
+    if (irq !== 1'b1) begin $display("  [rnd r%0d] done IRQ not asserted", ring); errors++; end
+    csr_rd(REG_IRQ_STATUS[7:0], irqs);
+    if (!irqs[IRQ_DONE]) begin $display("  [rnd r%0d] IRQ_STATUS.DONE not set", ring); errors++; end
+    csr_wr(REG_IRQ_STATUS[7:0], 32'h3);
+    @(posedge clk);
+    if (irq !== 1'b0) begin $display("  [rnd r%0d] done IRQ not cleared by W1C", ring); errors++; end
+
+    // golden-reference data check + coverage over the consumed descriptors
+    for (i = 0; i < consumed; i++) begin
+      hbyte = RND_HBUF + i*R_SLOT + rhoff[i];
+      sbyte = RND_SBUF + i*R_SLOT + rsoff[i];
+      for (k = 0; k < rlen[i]/8; k++) begin
+        if (rdir[i] == 0)
+          check($sformatf("rnd r%0d d%0d H2C", ring, i),
+                sys_mem.mem[widx({32'b0,sbyte})+k], patword(ring, i, k));
+        else
+          check($sformatf("rnd r%0d d%0d C2H", ring, i),
+                host_mem.mem[widx(hbyte)+k],        patword(ring, i, k));
+      end
+      cov_descs++;
+      if (rdir[i] == 0) cov_h2c++; else cov_c2h++;
+      if (rlen[i] == 8)   cov_single++;
+      if (rlen[i] >= 128) cov_maxburst++;
+      if (crosses1k(rhoff[i], rlen[i]) || crosses1k(rsoff[i], rlen[i])) cov_cross++;
+      if (rirq[i]) cov_irq++;
+    end
+    cov_rings++;
+    if      (mode == 0) cov_count_term++;
+    else if (mode == 1) cov_last_early++;
+    else                cov_last_final++;
+    if (consumed < D) cov_idx_partial++;
+  endtask
+
+  // print the coverage tally and flag any hole that should be impossible by construction
+  task automatic cov_report;
+    $display("=== coverage: rings=%0d descs=%0d H2C=%0d C2H=%0d single=%0d maxburst=%0d cross=%0d irq=%0d count_term=%0d last_early=%0d last_final=%0d idx_partial=%0d ===",
+             cov_rings, cov_descs, cov_h2c, cov_c2h, cov_single, cov_maxburst, cov_cross,
+             cov_irq, cov_count_term, cov_last_early, cov_last_final, cov_idx_partial);
+    if (cov_h2c        == 0) begin $display("  COVERAGE HOLE: no H2C transfer");        errors++; end
+    if (cov_c2h        == 0) begin $display("  COVERAGE HOLE: no C2H transfer");        errors++; end
+    if (cov_single     == 0) begin $display("  COVERAGE HOLE: no single-beat transfer"); errors++; end
+    if (cov_maxburst   == 0) begin $display("  COVERAGE HOLE: no max-length burst");    errors++; end
+    if (cov_cross      == 0) begin $display("  COVERAGE HOLE: no boundary-crossing");   errors++; end
+    if (cov_irq        == 0) begin $display("  COVERAGE HOLE: no C_IRQ descriptor");    errors++; end
+    if (cov_count_term == 0) begin $display("  COVERAGE HOLE: no count termination");   errors++; end
+    if (cov_last_early == 0) begin $display("  COVERAGE HOLE: no early-last termination"); errors++; end
+    if (cov_last_final == 0) begin $display("  COVERAGE HOLE: no final-last termination"); errors++; end
+    if (cov_idx_partial== 0) begin $display("  COVERAGE HOLE: no partial DESC_INDEX");  errors++; end
+  endtask
+
+  // =================================================================
   // Stimulus
   // =================================================================
   logic [31:0] st, ver, scr, ec, gi;
   int i, hr0;
+  int rng_seed;
 
   initial begin
 `ifdef DUMP
@@ -273,6 +474,11 @@ module tb_pcie_dma;
     $dumpvars(0, tb_pcie_dma);
 `endif
     $display("=== tb_pcie_dma : SYS_IF=%s STALLS=%0d ===", `SYSIF_STR, `ST);
+
+    // deterministic RNG seed for the constrained-random tier (override with +SEED=<n>)
+    if (!$value$plusargs("SEED=%d", rng_seed)) rng_seed = 32'd1;
+    $display("=== tb seed = %0d ===", rng_seed);
+    void'($urandom(rng_seed));   // note: Icarus updates the seed arg in place
 
     // hold reset
     repeat (5) @(posedge clk);
@@ -336,6 +542,7 @@ module tb_pcie_dma;
     launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
     if (!st[ST_ERROR]) begin $display("  expected ERROR on invalid desc"); errors++; end
     csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_DESC_INV", ec, ERR_DESC_INV);
+    check_err_irq("A DESC_INV");
     abort_clear;
     csr_rd(REG_STATUS[7:0], st);
     if (st[ST_ERROR]) begin $display("  ABORT did not clear ERROR"); errors++; end
@@ -344,12 +551,14 @@ module tb_pcie_dma;
     write_desc(0, HOST_SRC, SYS_DST, 32'd4, (32'h1<<C_VALID));
     launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
     csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_BAD_LEN", ec, ERR_BAD_LEN);
+    check_err_irq("B BAD_LEN");
     abort_clear;
 
     // C) misaligned address -> ERROR=BAD_ALIGN
     write_desc(0, HOST_SRC + 64'd4, SYS_DST, LEN0, (32'h1<<C_VALID));
     launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
     csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_BAD_ALIGN", ec, ERR_BAD_ALIGN);
+    check_err_irq("C BAD_ALIGN");
     abort_clear;
 
     // D) count == 0 -> immediate DONE, no error
@@ -392,6 +601,7 @@ module tb_pcie_dma;
     launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
     if (!st[ST_ERROR]) begin $display("  SYS write bus error not reported"); errors++; end
     csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_SYS_BUS(wr)", ec, ERR_SYS_BUS);
+    check_err_irq("F SYS_BUS");
     abort_clear;
     csr_rd(REG_STATUS[7:0], st);
     if (st[ST_ERROR])  begin $display("  ABORT did not clear ERROR (sys wr)"); errors++; end
@@ -499,6 +709,17 @@ module tb_pcie_dma;
     if (!st[ST_DONE]) begin $display("  restart after graceful STOP hung"); errors++; end
     for (i = 0; i < LEN0/(DW/8); i++)
       check("post-stop H2C", sys_mem.mem[widx({32'b0,SYS_STOP_DST})+i], host_mem.mem[widx(HOST_SRC)+i]);
+
+    // =====================================================================
+    // constrained-random descriptor-ring tier (long rings, golden checking,
+    // count- vs last-based termination, REG_DESC_INDEX read-back, coverage)
+    // =====================================================================
+    abort_clear;                          // ensure a clean E_IDLE before randomized runs
+    csr_wr(REG_IRQ_STATUS[7:0], 32'h3);
+    gen_and_run_ring(0, 0);   // long ring, count-based termination (drives core line ~287)
+    gen_and_run_ring(1, 1);   // early C_LAST -> partial REG_DESC_INDEX
+    gen_and_run_ring(2, 2);   // final C_LAST
+    cov_report;
 
     // ---- report ----
     if (sys_bus_error)  begin $display("  sys_bus_error asserted");  errors++; end
