@@ -8,6 +8,10 @@ smtbmc z3
 
 [script]
 read_verilog -sv -formal -I. dma_pkg.sv dma_fifo.sv fv_fifo.sv
+# deployment data width; small depth keeps the show-ahead / data-integrity
+# tracker reachable within the BMC bound (no-overflow at the real DEPTH=256 is
+# proven inductively in fifo_prove.sby).
+chparam -set WIDTH 64 -set DEPTH 8 fv_fifo
 prep -top fv_fifo
 
 [files]

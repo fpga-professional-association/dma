@@ -1,0 +1,20 @@
+[options]
+# Unbounded, DEPTH-INDEPENDENT proof (k-induction) of the FIFO occupancy
+# invariants at the deployment depth FIFO_DEPTH = 256 -- a bound BMC can never
+# reach. `depth` is the induction length, NOT a BMC bound.
+mode prove
+depth 5
+
+[engines]
+smtbmc z3
+# alternatives: smtbmc boolector | abc pdr  (PDR/IC3, also unbounded)
+
+[script]
+read_verilog -sv -formal -I. dma_pkg.sv dma_fifo.sv fv_fifo_ind.sv
+chparam -set WIDTH 64 -set DEPTH 256 fv_fifo_ind
+prep -top fv_fifo_ind
+
+[files]
+../rtl/pkg/dma_pkg.sv
+../rtl/core/dma_fifo.sv
+fv_fifo_ind.sv

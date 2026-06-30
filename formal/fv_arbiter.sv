@@ -33,7 +33,9 @@ module fv_arbiter #(
   // free downstream slave
   input logic            o_waitrequest,
   input logic [DW-1:0]   o_readdata,
-  input logic            o_readdatavalid
+  input logic            o_readdatavalid,
+  // free abort input (issue #7: abort coverage)
+  input logic            clr
 );
   localparam int unsigned BCW = dma_pkg::BCW;
 
@@ -45,12 +47,16 @@ module fv_arbiter #(
   logic [DW/8-1:0] o_byteenable;
   logic [BCW-1:0]  o_burstcount;
 
-  wire clr = 1'b0;   // abort path is exercised by simulation, not this proof
-
   dma_arbiter #(.AW(AW), .DW(DW), .BCW(BCW)) dut (.*);
+
+  // ---- cover witnesses (issue #7: rule out vacuous passes) ----
+  (* keep *) wire cov_grant0 = (m0_read | m0_write) && !m0_waitrequest; // m0 accepted on the bus
+  (* keep *) wire cov_grant1 = (m1_read | m1_write) && !m1_waitrequest; // m1 accepted on the bus
+  (* keep *) wire cov_abort  = clr && (o_read | o_write);               // abort while a cmd is driven
 
   // formal reset model
   logic f_init = 1'b1;  always @(posedge clk) f_init <= 1'b0;
+  logic past_ok = 1'b0; always @(posedge clk) past_ok <= rst_n;
   always @(posedge clk) begin
     if (f_init) assume (!rst_n); else assume (rst_n);
   end
@@ -78,5 +84,18 @@ module fv_arbiter #(
 
     // ---------- a forwarded write payload comes from one of the masters ----------
     if (o_write) assert (o_writedata == m0_writedata || o_writedata == m1_writedata);
+
+    // ---------- abort safety (issue #7): clr drops the in-flight transaction ----------
+    // After abort, no read response is routed to either master (proven from ports;
+    // the in-flight transaction is dropped so the routing qualifier goes inactive).
+    if (past_ok && $past(clr)) a_abort_no_resp : assert (!m0_readdatavalid && !m1_readdatavalid);
+    // With no fresh request pending, no stray downstream command is issued.
+    if (past_ok && $past(clr) && !(m0_read | m0_write | m1_read | m1_write))
+                               a_abort_no_stray : assert (!o_read && !o_write);
+
+    // ---------- cover witnesses (reachability checked by run_formal.sh / sby) ----------
+    c_grant0 : cover (cov_grant0);
+    c_grant1 : cover (cov_grant1);
+    c_abort  : cover (cov_abort);
   end
 endmodule

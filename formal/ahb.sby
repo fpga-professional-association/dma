@@ -7,6 +7,8 @@ smtbmc z3
 
 [script]
 read_verilog -sv -formal -I. dma_pkg.sv gmm_to_ahb.sv fv_ahb.sv
+# re-prove at the deployment widths (SADDR_W=32, DATA_W=64)
+chparam -set AW 32 -set DW 64 fv_ahb
 prep -top fv_ahb
 
 [files]

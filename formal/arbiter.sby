@@ -7,6 +7,8 @@ smtbmc z3
 
 [script]
 read_verilog -sv -formal -I. dma_pkg.sv dma_arbiter.sv fv_arbiter.sv
+# re-prove at the deployment widths (HADDR_W=64, DATA_W=64)
+chparam -set AW 64 -set DW 64 fv_arbiter
 prep -top fv_arbiter
 
 [files]

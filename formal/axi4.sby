@@ -7,6 +7,8 @@ smtbmc z3
 
 [script]
 read_verilog -sv -formal -I. dma_pkg.sv gmm_to_axi4.sv fv_axi4.sv
+# re-prove at the deployment widths (SADDR_W=32, DATA_W=64)
+chparam -set AW 32 -set DW 64 fv_axi4
 prep -top fv_axi4
 
 [files]

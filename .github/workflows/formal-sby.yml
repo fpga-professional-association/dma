@@ -1,0 +1,46 @@
+name: Formal (SymbiYosys + solver)
+
+# Unbounded / inductive formal proofs that need SymbiYosys and an SMT solver
+# (z3/boolector), which the default CI image does not ship. This workflow is
+# intentionally:
+#   * manual-only (workflow_dispatch), so it never runs on push/PR, and
+#   * continue-on-error, so even if a proof is slow or a target needs tuning it
+#     can NEVER turn a required check red.
+# The bounded SAT proofs in scripts/run_formal.sh (run by the main CI "formal"
+# job) remain the gating formal check.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sby:
+    name: sby (oss-cad-suite)
+    runs-on: ubuntu-latest
+    continue-on-error: true        # informational; must not gate required CI
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install OSS CAD Suite (yosys + sby + z3/boolector/yices)
+        uses: YosysHQ/setup-oss-cad-suite@v3
+
+      - name: Tool versions (incl. solver)
+        run: |
+          for t in yosys sby z3 boolector yices-smt2; do
+            command -v "$t" >/dev/null 2>&1 \
+              && { printf '%s: ' "$t"; "$t" --version 2>&1 | head -1; } \
+              || echo "$t: (absent)"
+          done
+
+      - name: Run sby targets
+        working-directory: formal
+        run: |
+          set -x
+          # Inductive (mode prove) first, then the deployment-width BMC + cover targets.
+          for t in fifo_prove fifo axi4 ahb arbiter; do
+            echo "::group::sby $t.sby"
+            sby -f "$t.sby"
+            echo "::endgroup::"
+          done

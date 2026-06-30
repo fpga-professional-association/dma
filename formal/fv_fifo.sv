@@ -19,6 +19,7 @@ module fv_fifo #(
   input logic                   wr_en,
   input logic [WIDTH-1:0]       wr_data,
   input logic                   rd_en,
+  input logic                   clr,      // free: abort/flush (issue #7 abort coverage)
   input logic                   tag_now   // free: pick a push to track
 );
   localparam int LVLW = $clog2(DEPTH)+1;
@@ -28,7 +29,7 @@ module fv_fifo #(
   logic [LVLW-1:0] level;
 
   dma_fifo #(.WIDTH(WIDTH), .DEPTH(DEPTH)) dut (
-    .clk, .rst_n, .clr(1'b0), .wr_en, .wr_data, .full,
+    .clk, .rst_n, .clr, .wr_en, .wr_data, .full,
     .rd_en, .rd_data, .empty, .level
   );
 
@@ -57,6 +58,10 @@ module fv_fifo #(
       tracking <= 1'b0;
       tag_data <= '0;
       ahead    <= '0;
+    end else if (clr) begin               // issue #7: abort flushes the FIFO; drop tracking
+      tracking <= 1'b0;
+      tag_data <= '0;
+      ahead    <= '0;
     end else if (!tracking) begin
       if (push && !pop && tag_now) begin
         tracking <= 1'b1;
@@ -69,6 +74,11 @@ module fv_fifo #(
     end
   end
 
+  // ---- cover witnesses (issue #7: rule out vacuous passes) ----
+  (* keep *) wire cov_full       = full;                            // a full FIFO is reachable
+  (* keep *) wire cov_data_ret   = tracking && (ahead == 0) && pop; // tracked element returned
+  (* keep *) wire cov_abort_busy = clr && !empty;                   // abort while non-empty
+
   // ---- properties ----
   always @(posedge clk) begin
     if (rst_n) begin
@@ -80,9 +90,16 @@ module fv_fifo #(
       if (tracking) assert (ahead < level);         // a_track_inrange
       if (tracking && (ahead == 0) && pop)
                     assert (rd_data == tag_data);   // a_data_integrity
-      if (past_ok)
-                    assert (level ==                // a_level_step
+      if (past_ok && !$past(clr))
+                    assert (level ==                // a_level_step (skip the flush cycle)
                        $past(level) + ($past(push) ? 1 : 0) - ($past(pop) ? 1 : 0));
+      if (past_ok && $past(clr))
+                    a_abort_drained : assert (level == '0); // issue #7: abort empties the FIFO
+
+      // cover witnesses (checked for reachability by run_formal.sh / sby mode cover)
+      c_full       : cover (cov_full);
+      c_data_ret   : cover (cov_data_ret);
+      c_abort_busy : cover (cov_abort_busy);
     end
   end
 
