@@ -59,7 +59,8 @@ package dma_pkg;
   //   bytes  8..15 : sys_addr  [63:0]   (only SADDR_W bits used)
   //   bytes 16..19 : length    [31:0]   (in bytes)
   //   bytes 20..23 : control   [31:0]
-  //   bytes 24..31 : reserved / status-writeback
+  //   bytes 24..31 : reserved (must be 0) -- no in-band per-descriptor status
+  //                  writeback; software uses STATUS/REG_DESC_INDEX/IRQ instead
   parameter int unsigned DESC_BYTES = 32;
   parameter int unsigned DESC_BITS  = DESC_BYTES*8;                 // 256
   parameter int unsigned DESC_BEATS = (DESC_BITS + DATA_W - 1)/DATA_W;

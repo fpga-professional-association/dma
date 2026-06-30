@@ -13,7 +13,7 @@ entries in order. All multi-byte fields are **little-endian**.
  0x10  ├───────────────────────┬───────────────────────┤
        │ length [31:0] (bytes) │ control [31:0]         │
  0x18  ├───────────────────────┴───────────────────────┤
-       │ reserved / status writeback [63:0]             │
+       │ reserved [63:0]   (must be 0)                  │
  0x20  └───────────────────────────────────────────────┘
 ```
 
@@ -26,6 +26,13 @@ entries in order. All multi-byte fields are **little-endian**.
 | 2   | C_IRQ   | 1 = raise the completion IRQ after this descriptor.   |
 | 3   | C_LAST  | 1 = last descriptor (engine may stop early).          |
 | 31:4| —       | Reserved (0).                                        |
+
+> **Note.** Bytes 24..31 are strictly reserved and must be written as 0. The
+> engine performs **no in-band per-descriptor status writeback** (it never writes
+> to `base + idx*32 + 24`, and `C_VALID` is read but never cleared in the ring).
+> Software observes completion via the global `STATUS` register, the
+> `REG_DESC_INDEX` completed-descriptor count, and the optional per-descriptor
+> `C_IRQ` completion interrupt.
 
 ## Constraints
 
