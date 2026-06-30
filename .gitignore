@@ -41,6 +41,12 @@ quartus/*.bak
 quartus/*.sld
 PLLJ_PLLSPE_INFO.txt
 
+# ── Platform Designer (Qsys) example generation outputs ──────────────────────
+quartus/example/*.qsys
+quartus/example/*.sopcinfo
+quartus/example/*.ip
+quartus/example/pcie_dma_example/
+
 # ── Logs & temp ──────────────────────────────────────────────────────────────
 *.log
 *.jou

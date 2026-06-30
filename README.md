@@ -43,7 +43,8 @@ rtl/
   top/pcie_dma_top.sv         configurable top (SYS_IF = AVALON | AXI4 | AHB)
 formal/                       SVA harnesses + .sby (FIFO, arbiter, AXI4, AHB)
 sim/                          self-checking testbench + Avalon/AXI/AHB memory models
-quartus/                      .qpf/.qsf/.sdc Quartus project
+quartus/                      .qpf/.qsf/.sdc Quartus project; pcie_dma_hw.tcl
+                              (Platform Designer component) + example/ + SDCs
 scripts/                      run_sim.sh, lint.sh, run_synth.sh, run_formal.sh
 docs/                         architecture, interfaces, register_map, descriptor_format
 ```
@@ -95,6 +96,27 @@ Change the bus option with `set_parameter -name SYS_IF "AXI4"` in `pcie_dma.qsf`
 `pcie_dma_top` is an IP core: integrate it as a Platform Designer / Qsys
 component behind the PCIe Hard IP (HOST master → TXS, CSR slave ← BAR/RXM), or
 fit it standalone (the included `virtual_pins.tcl` makes the bus ports virtual).
+
+### Platform Designer (Qsys) component
+
+`quartus/pcie_dma_hw.tcl` packages `pcie_dma_top` as a Platform Designer
+component ("PCIe Scatter-Gather DMA Engine" in the IP Catalog). It exposes the
+`csr` Avalon-MM slave, the `host` Avalon-MM master (PCIe TXS), the `irq`
+interrupt sender, the `sys_bus_error` conduit, and one SYS master selected by
+the `SYS_IF` parameter — `sys_avm` (Avalon-MM), `sys_axi` (AXI4), or `sys_ahb`
+(AHB conduit). An elaboration callback exposes exactly the SYS interface
+matching `SYS_IF` and terminates the other two.
+
+* Worked example wiring the component behind a PCIe Hard IP:
+  `quartus/example/` (`pcie_dma_example.tcl` + notes).
+* Integration timing template: `quartus/pcie_dma_integration.sdc` (uses the
+  Hard IP application clock and covers the single-clock and separate-SYS-clock
+  cases; use it instead of the standalone `pcie_dma.sdc`).
+
+Point Platform Designer at the `quartus/` directory (or add it to the IP search
+path) and the component appears in the IP Catalog. The artifacts are validated
+against the RTL ports/parameters but require Quartus/Platform Designer (not part
+of the open-source flow) to elaborate.
 
 Simulation in Questa-Intel / ModelSim-Intel: compile `rtl/` + `sim/` and run
 `tb_pcie_dma` with `+define+USE_AXI` / `+define+USE_AHB` / `+define+STALLS`.
