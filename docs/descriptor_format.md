@@ -44,6 +44,15 @@ entries in order. All multi-byte fields are **little-endian**.
 * The engine processes descriptors `[0 .. DESC_COUNT-1]`. `C_LAST` lets a ring be
   terminated before `DESC_COUNT` is reached.
 
+> **Whole-bus-word contract.** The `length` and address constraints above are not
+> incidental: the data mover transfers only complete bus words (`DATA_W/8` bytes,
+> 8 bytes at the default `DATA_W=64`) with all byte-lanes enabled — there is no
+> partial-strobe / sub-word datapath today. Buffers must therefore be padded and
+> aligned to `DATA_W/8`. The `BAD_LEN` / `BAD_ALIGN` codes (`register_map.md`)
+> enforce this at run time before any data is moved. Sub-word / unaligned
+> (byte-enable) support is tracked as future work — see the **Limitations**
+> section of the top-level `README.md`.
+
 ## Assembly into `desc_t`
 
 The fetch unit reads `DESC_BEATS = ceil(256 / DATA_W)` beats from host memory,

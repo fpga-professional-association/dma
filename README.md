@@ -32,6 +32,33 @@ elaboration: **Avalon-MM**, **AXI4**, or **AHB-Lite**.
 * One internal "GMM" master profile (Avalon-MM pipelined) → the core is verified
   once and each external bus is an isolated, separately-verified adapter.
 
+## Limitations
+
+> **Whole-bus-word, aligned transfers only.** Every transfer moves data in
+> complete bus words (`DATA_W/8` bytes — 8 bytes at the default `DATA_W=64`). The
+> data mover drives all-ones byte-enables on every beat and converts a
+> descriptor's byte `length` to whole beats, so sub-word (partial-strobe) and
+> unaligned transfers cannot be expressed. The engine **rejects** any descriptor
+> that would require them, before any data is moved:
+>
+> * `length` must be non-zero and a multiple of `DATA_W/8` — otherwise the
+>   descriptor fails with `STATUS.ERROR` and `ERR_INFO = BAD_LEN (0x01)`.
+> * `host_addr` and `sys_addr` must each be `DATA_W/8`-aligned — otherwise
+>   `STATUS.ERROR` with `ERR_INFO = BAD_ALIGN (0x02)`.
+>
+> **Implication for integrators:** host and system buffers must be padded and
+> aligned to `DATA_W/8` bytes. A buffer whose base or size is not a multiple of
+> `DATA_W/8` cannot be DMA'd directly — round the base down / size up to a
+> `DATA_W/8` boundary (ignoring the padding bytes), or stage through an aligned
+> bounce buffer.
+>
+> **Path to byte-enable support (future work):** add first/last-beat byte-enable
+> shaping in `dma_data_mover.sv`, relax the `BAD_LEN`/`BAD_ALIGN` checks in
+> `dma_engine_core.sv`, and handle AHB (which has no write strobes) via narrowed
+> `HSIZE` for the head/tail beats or read-modify-write. The AXI4 and Avalon
+> adapters already forward `wstrb`/`byteenable`. See `docs/descriptor_format.md`,
+> `docs/interfaces.md`, and `docs/register_map.md`.
+
 ## Directory layout
 
 ```
