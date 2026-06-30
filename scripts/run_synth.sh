@@ -67,10 +67,14 @@ synth_one gmm_to_ahb     rtl/adapters/gmm_to_ahb.sv
 #----------------------------------------------------------------------------
 # Every identifier dma_pkg exports: parameters, typedef names, enum members.
 SYMS="$WORK/pkg_syms.txt"
-{ grep -oP '^\s*parameter\s+(?:int\s+unsigned\s+)?\K[A-Za-z_]\w*' "$PKG"
+# A parameter's name is the identifier immediately before its `=` (robust to any
+# type prefix: `parameter int unsigned X`, `parameter logic [1:0] Y`, ...). A
+# keyword filter guards against a type token ever leaking into the symbol set.
+{ grep -oP '^\s*parameter\b.*?\K[A-Za-z_]\w*(?=\s*=)' "$PKG"
   grep -oP '\}\s*\K[A-Za-z_]\w*(?=\s*;)' "$PKG"
   grep -oP 'enum\s+[^{]*\{\K[^}]*' "$PKG" | grep -oP '[A-Za-z_]\w*(?=\s*=)'
-} | sort -u > "$SYMS"
+} | grep -vxE 'logic|bit|int|integer|unsigned|signed|byte|shortint|longint|enum|struct|union|typedef|parameter|localparam|reg|wire' \
+  | sort -u > "$SYMS"
 
 cat > "$WORK/flatten.pl" <<'PL'
 use strict; use warnings;
