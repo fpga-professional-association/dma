@@ -49,8 +49,10 @@ module gmm_to_axi4 #(
   output logic            axi_wvalid,
   input  logic            axi_wready,
   // write response
+  /* verilator lint_off UNUSEDSIGNAL */  // bid: single ID; bresp[0]: only [1]=error used
   input  logic [IDW-1:0]  axi_bid,
   input  logic [1:0]      axi_bresp,
+  /* verilator lint_on UNUSEDSIGNAL */
   input  logic            axi_bvalid,
   output logic            axi_bready,
   // read address
@@ -64,9 +66,11 @@ module gmm_to_axi4 #(
   output logic            axi_arvalid,
   input  logic            axi_arready,
   // read data
+  /* verilator lint_off UNUSEDSIGNAL */  // rid: single ID; rresp[0]: only [1]=error used
   input  logic [IDW-1:0]  axi_rid,
   input  logic [DW-1:0]   axi_rdata,
   input  logic [1:0]      axi_rresp,
+  /* verilator lint_on UNUSEDSIGNAL */
   input  logic            axi_rlast,
   input  logic            axi_rvalid,
   output logic            axi_rready,
@@ -77,6 +81,12 @@ module gmm_to_axi4 #(
 
   localparam logic [1:0] BURST_INCR = 2'b01;
   localparam logic [2:0] AXSIZE     = 3'($clog2(DW/8));
+
+  // elaboration-time check: AXI AWLEN/ARLEN are 8 bits, so the GMM burstcount
+  // width (beats-1) must fit; the {{(8-BCW){...}}} pad underflows when BCW > 8.
+  if (BCW > 8) begin : gen_axlen_width_check
+    $error("gmm_to_axi4: BCW (%0d) exceeds the 8-bit AXI AWLEN/ARLEN field", BCW);
+  end
 
   // AX_W presents AW and W concurrently (aw_done/w_done track which has
   // completed) so the adapter is robust against a slave that gates AWREADY on

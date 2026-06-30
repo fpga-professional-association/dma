@@ -63,13 +63,14 @@ module dma_data_mover
   logic                running, dir_q;
 
   // ---------------- FIFO ----------------
-  logic              fifo_wr, fifo_rd, fifo_full, fifo_empty;
+  logic              fifo_wr, fifo_rd, fifo_empty;
   logic [DATA_W-1:0] fifo_wdata, fifo_rdata;
   logic [LVLW-1:0]   fifo_level;
 
   dma_fifo #(.WIDTH(DATA_W), .DEPTH(DEPTH)) u_fifo (
     .clk(clk), .rst_n(rst_n), .clr(clr),
-    .wr_en(fifo_wr), .wr_data(fifo_wdata), .full(fifo_full),
+    .wr_en(fifo_wr), .wr_data(fifo_wdata),
+    .full(/* unused: read engine reserves space via fifo_level/r_space */),
     .rd_en(fifo_rd), .rd_data(fifo_rdata), .empty(fifo_empty),
     .level(fifo_level)
   );
@@ -104,7 +105,9 @@ module dma_data_mover
   // beats remaining until the next 1 KiB boundary from `a`
   // (uses shifts/casts, no in-process constant part-selects, for tool portability)
   function automatic [LEN_W-1:0] beats_to_boundary(input logic [HADDR_W-1:0] a);
+    /* verilator lint_off UNUSEDSIGNAL */  // only low 10 bits (a mod 1024) are used
     logic [HADDR_W-1:0] a_lo;
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [LEN_W-1:0]   bytes_to_b;
     a_lo       = a - ((a >> 10) << 10);          // a mod 1024
     bytes_to_b = 32'd1024 - LEN_W'(a_lo);        // 1 .. 1024
