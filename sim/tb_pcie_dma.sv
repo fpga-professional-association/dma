@@ -23,6 +23,14 @@
   `define SYSIF_STR "AVALON"
 `endif
 
+// Buses that have a real SYS error-response channel (AXI4 RRESP/BRESP, AHB
+// HRESP). Avalon-MM has none, so ERR_SYS_BUS is legitimately N/A there.
+`ifdef USE_AXI
+  `define SYS_HAS_ERR
+`elsif USE_AHB
+  `define SYS_HAS_ERR
+`endif
+
 `ifdef STALLS
   `define ST 1
 `else
@@ -129,7 +137,7 @@ module tb_pcie_dma;
   // SYS memory (selected slave) -- always named sys_mem
   // =================================================================
 `ifdef USE_AXI
-  axi_mem_model #(.AW(SAW), .DW(DW), .STALL(`ST)) sys_mem (
+  axi_mem_model #(.AW(SAW), .DW(DW), .STALL(`ST), .ERR_WORD(32'h0800/(DW/8))) sys_mem (
     .clk, .rst_n,
     .awid(axi_awid), .awaddr(axi_awaddr), .awlen(axi_awlen), .awsize(axi_awsize),
     .awburst(axi_awburst), .awcache(axi_awcache), .awprot(axi_awprot),
@@ -170,6 +178,16 @@ module tb_pcie_dma;
   localparam logic [31:0] SYS_SRC        = 32'h0000_0200; // C2H src
   localparam int LEN0 = 256;   // bytes, H2C
   localparam int LEN1 = 520;   // bytes, C2H (crosses 0x400 boundary on sys read)
+  // SYS address whose word is fault-injected (SLVERR/HRESP) by the AXI4/AHB
+  // models; matches the ERR_WORD parameter passed to those slaves above.
+  localparam logic [31:0] SYS_ERR_ADDR = 32'h0000_0800;
+
+  // Count accepted HOST read commands so the BAD_BASE test can prove that an
+  // unaligned ring base is rejected at GO with no descriptor fetch issued.
+  int host_reads = 0;
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n)                            host_reads <= 0;
+    else if (host_read && !host_waitrequest) host_reads <= host_reads + 1;
 
   function automatic int widx(input logic [63:0] byte_addr);
     widx = int'(byte_addr >> $clog2(DW/8));
@@ -228,7 +246,7 @@ module tb_pcie_dma;
   // Stimulus
   // =================================================================
   logic [31:0] st, ver, scr, ec;
-  int i;
+  int i, hr0;
 
   initial begin
 `ifdef DUMP
@@ -344,16 +362,41 @@ module tb_pcie_dma;
     for (i = 0; i < LEN0/(DW/8); i++)
       check("post-abort H2C", sys_mem.mem[widx({32'b0,SYS_DST})+i], host_mem.mem[widx(HOST_SRC)+i]);
 
-    // F) SYS bus error (AHB only): a write to the fault-injected word must raise
-    //    STATUS.ERROR / ERR_INFO==ERR_SYS_BUS, and ABORT must clear sys_bus_error.
-`ifdef USE_AHB
-    write_desc(0, HOST_SRC, 32'h0000_0800, LEN0, (32'h1<<C_VALID));   // H2C -> SYS err word
+    // F) SYS bus error (AXI4 / AHB; Avalon-MM has no error channel, so N/A): a
+    //    transfer touching the fault-injected word must raise STATUS.ERROR /
+    //    ERR_INFO==ERR_SYS_BUS, and ABORT must clear both the sticky engine error
+    //    and the sys_bus_error output. Both a write (BRESP/HRESP) and a read
+    //    (RRESP/HRESP) error response are exercised.
+`ifdef SYS_HAS_ERR
+    // F1) write-side error: H2C write into the fault-injected SYS word
+    write_desc(0, HOST_SRC, SYS_ERR_ADDR, LEN0, (32'h1<<C_VALID));
     launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
-    if (!st[ST_ERROR]) begin $display("  SYS bus error not reported"); errors++; end
-    csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_SYS_BUS", ec, ERR_SYS_BUS);
+    if (!st[ST_ERROR]) begin $display("  SYS write bus error not reported"); errors++; end
+    csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_SYS_BUS(wr)", ec, ERR_SYS_BUS);
     abort_clear;
-    if (sys_bus_error) begin $display("  ABORT did not clear sys_bus_error"); errors++; end
+    csr_rd(REG_STATUS[7:0], st);
+    if (st[ST_ERROR])  begin $display("  ABORT did not clear ERROR (sys wr)"); errors++; end
+    if (sys_bus_error) begin $display("  ABORT did not clear sys_bus_error (wr)"); errors++; end
+
+    // F2) read-side error: C2H read out of the fault-injected SYS word
+    write_desc(0, HOST_DST, SYS_ERR_ADDR, LEN0, (32'h1<<C_VALID)|(32'h1<<C_DIR));
+    launch_and_wait(HOST_DESC_BASE[31:0], 32'd1, st);
+    if (!st[ST_ERROR]) begin $display("  SYS read bus error not reported"); errors++; end
+    csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_SYS_BUS(rd)", ec, ERR_SYS_BUS);
+    abort_clear;
+    if (sys_bus_error) begin $display("  ABORT did not clear sys_bus_error (rd)"); errors++; end
 `endif
+
+    // G) unaligned descriptor ring base (bus-independent): rejected at GO with
+    //    ERR_BAD_BASE before any fetch is issued; ABORT then clears it.
+    hr0 = host_reads;
+    launch_and_wait(HOST_DESC_BASE[31:0] + 32'd4, 32'd1, st);  // +4 -> not 32B aligned
+    if (!st[ST_ERROR]) begin $display("  expected ERROR on unaligned base"); errors++; end
+    csr_rd(REG_ERR_INFO[7:0], ec);  check("ERR_BAD_BASE", ec, ERR_BAD_BASE);
+    if (host_reads != hr0) begin $display("  BAD_BASE issued a fetch (none expected)"); errors++; end
+    abort_clear;
+    csr_rd(REG_STATUS[7:0], st);
+    if (st[ST_ERROR]) begin $display("  ABORT did not clear ERROR (bad base)"); errors++; end
 
     // ---- report ----
     if (sys_bus_error) begin $display("  sys_bus_error asserted"); errors++; end

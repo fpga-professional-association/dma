@@ -13,7 +13,8 @@ module axi_mem_model #(
   parameter int IDW        = 1,
   parameter int SIZE_WORDS = 1 << 16,
   parameter int STALL      = 0,
-  parameter int SEED       = 16'hBEEF
+  parameter int SEED       = 16'hBEEF,
+  parameter int ERR_WORD   = -1   // word index that responds SLVERR (-1 = none)
 ) (
   input  logic           clk,
   input  logic           rst_n,
@@ -79,6 +80,7 @@ module axi_mem_model #(
   typedef enum logic [1:0] {WS_AW, WS_W, WS_B} ws_e;
   ws_e           ws;
   logic [AW-1:0] waddr;
+  logic          werr;            // a beat in this burst hit the error word
 
   // With back-pressure enabled, model a (legal) slave that gates AWREADY on
   // WVALID -- this deadlocks a master that serialises AW strictly before W, so
@@ -86,22 +88,28 @@ module axi_mem_model #(
   assign awready = (ws == WS_AW) && !stall_a && ((STALL == 0) || wvalid);
   assign wready  = (ws == WS_W)  && !stall_w;
   assign bvalid  = (ws == WS_B);
-  assign bresp   = 2'b00;
+  // SLVERR (2'b10) for a burst that wrote the configured error word; else OKAY.
+  // (werr is only ever set when ERR_WORD >= 0, so no extra guard is needed here.)
+  assign bresp   = werr ? 2'b10 : 2'b00;
   assign bid     = '0;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       ws    <= WS_AW;
       waddr <= '0;
+      werr  <= 1'b0;
     end else begin
       unique case (ws)
         WS_AW: if (awvalid && awready) begin
                  waddr <= awaddr;
+                 werr  <= 1'b0;            // fresh burst: clear sticky write-error
                  ws    <= WS_W;
                end
         WS_W:  if (wvalid && wready) begin
                  for (int j = 0; j < DW/8; j++)
                    if (wstrb[j]) mem[idx(waddr)][j*8 +: 8] <= wdata[j*8 +: 8];
+                 if ((ERR_WORD >= 0) && (idx(waddr) == IXW'(ERR_WORD)))
+                   werr <= 1'b1;           // fault-inject: respond SLVERR at WS_B
                  waddr <= waddr + STRIDE;
                  if (wlast) ws <= WS_B;
                end
@@ -119,7 +127,9 @@ module axi_mem_model #(
 
   assign arready = (rs == RS_AR) && !stall_a;
   assign rvalid  = (rs == RS_R) && !stall_r;
-  assign rresp   = 2'b00;
+  // SLVERR (2'b10) per beat that reads the configured error word; else OKAY.
+  assign rresp   = ((rs == RS_R) && (ERR_WORD >= 0) && (idx(raddr) == IXW'(ERR_WORD)))
+                   ? 2'b10 : 2'b00;
   assign rid     = '0;
   assign rlast   = (rs == RS_R) && (rbeats == 9'd1);
   assign rdata   = mem[idx(raddr)];
