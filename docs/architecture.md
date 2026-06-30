@@ -104,6 +104,21 @@ GMM contract is designed to drop into such a bridge unchanged.
   for C2H host writes via PCIe), insert a read-back/fence on that bus after DONE.
   A non-OK response that arrives in this window is still captured and turns the
   descriptor into `STATUS.ERROR=SYS_BUS` (so it is never silently dropped).
+* **HOST/PCIe bus errors.** The HOST GMM port carries an optional per-beat
+  completion status (`host_response[1:0]`, Avalon-MM `response`) that mirrors the
+  PCIe Hard IP TXS status. Any non-OK code on a HOST *read* beat (Unsupported
+  Request / Completer Abort / poisoned TLP) is captured into a sticky
+  `host_err_latched` flop in `dma_engine_core` — the PCIe-side parallel of
+  `sys_err_latched`. Because the HOST port serves both descriptor fetches and
+  H2C data reads, the latch is re-armed at the start of each fetch and each move
+  and is checked in the `E_FETCH_WAIT` (read error → descriptor unreliable, takes
+  priority over content checks) and `E_RUN` states, turning the descriptor into
+  `STATUS.ERROR=HOST_BUS` and asserting the top-level `host_bus_error` output. The
+  status is sampled at the consolidated HOST read-data interface (downstream of
+  the 2:1 arbiter merge), so no per-master response routing is required. HOST
+  *write* completion errors (C2H) and a completion-timeout watchdog are out of
+  scope (the simple Avalon-MM HOST profile has no write response); a read that
+  never returns still relies on the testbench/global timeout.
 * **Abort** truncates an in-flight bus burst (see `docs/register_map.md`); it is
   for error recovery, not graceful stop.
 * **Descriptor ring base** must be 32-byte (`DESC_BYTES`) aligned; enforced at GO

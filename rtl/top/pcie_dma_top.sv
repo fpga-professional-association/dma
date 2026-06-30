@@ -38,6 +38,7 @@ module pcie_dma_top
   input  logic                  host_waitrequest,
   input  logic [DATA_W-1:0]     host_readdata,
   input  logic                  host_readdatavalid,
+  input  logic [1:0]            host_response,   // PCIe completion status (00=OKAY) on read beats
 
   // ================= SYS Avalon-MM master (SYS_IF=="AVALON") =================
   output logic [SADDR_W-1:0]    avm_address,
@@ -98,7 +99,8 @@ module pcie_dma_top
 
   // ================= misc =================
   output logic                  irq,
-  output logic                  sys_bus_error
+  output logic                  sys_bus_error,
+  output logic                  host_bus_error    // HOST/PCIe read returned a non-OK response
 );
 
   // -------- adapter <-> core error / clear --------
@@ -127,11 +129,13 @@ module pcie_dma_top
     .host_writedata(host_writedata), .host_byteenable(host_byteenable),
     .host_burstcount(host_burstcount), .host_waitrequest(host_waitrequest),
     .host_readdata(host_readdata), .host_readdatavalid(host_readdatavalid),
+    .host_response(host_response),
     .sys_address(sg_address), .sys_read(sg_read), .sys_write(sg_write),
     .sys_writedata(sg_writedata), .sys_byteenable(sg_byteenable),
     .sys_burstcount(sg_burstcount), .sys_waitrequest(sg_waitrequest),
     .sys_readdata(sg_readdata), .sys_readdatavalid(sg_readdatavalid),
     .sys_bus_err(adapter_err), .sys_clr(sys_clr_w),
+    .host_bus_error(host_bus_error),
     .irq(irq)
   );
 
