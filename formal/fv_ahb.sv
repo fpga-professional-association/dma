@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // fv_ahb.sv -- Formal AHB-Lite-compliance properties for gmm_to_ahb
 //

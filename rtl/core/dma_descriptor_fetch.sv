@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // dma_descriptor_fetch.sv -- Reads and decodes a descriptor from host memory
 //

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // avalon_mem_model.sv -- Avalon-MM pipelined slave with backing memory (sim)
 //

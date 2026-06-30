@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // dma_engine_core.sv -- Top of the bus-agnostic DMA core
 //

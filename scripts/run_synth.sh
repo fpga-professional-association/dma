@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #============================================================================
 # run_synth.sh -- Open-source gate-mapping sanity (yosys) for the protocol- and
 # data-path-critical blocks, confirming they synthesize to real flip-flops/LUTs.

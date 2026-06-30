@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // gmm_to_axi4.sv -- GMM (Avalon-MM pipelined) -> AXI4 master
 //

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // dma_data_mover.sv -- Bidirectional read->FIFO->write data mover
 //

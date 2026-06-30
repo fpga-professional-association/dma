@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #============================================================================
 # run_formal.sh -- Bounded formal proofs using the open-source yosys built-in
 # SAT engine (no external SMT solver required).

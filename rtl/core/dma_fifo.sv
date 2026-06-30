@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // dma_fifo.sv -- Synchronous show-ahead (first-word fall-through) FIFO
 //

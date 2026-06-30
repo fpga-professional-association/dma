@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // gmm_to_avalon.sv -- GMM (Avalon-MM pipelined) -> Avalon-MM master
 //

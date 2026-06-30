@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //============================================================================
 // dma_pkg.sv  --  Global parameters, types and constants for the PCIe DMA engine
 //
